@@ -16,7 +16,7 @@ def test_create_sets_our_notification_and_reports_what_it_sees(cd, instance):
         "```actions\n- op: create\n  url: https://c.example/\n  title: C\n  include_filters: ['.x']\n```"
     )
     t = Translator("es")
-    rs = actions.apply(cd, acts, settings(tag="Cambios Web"), TOKEN, -5, t)
+    rs = actions.apply(cd, acts, settings(tag="Telegram"), TOKEN, -5, t)
     assert rs[0].ok and rs[0].text == "new text"
     w = instance.watches[rs[0].uuid]
     assert notifies(w, TOKEN) == -5
@@ -30,7 +30,7 @@ def test_create_sets_our_notification_and_reports_what_it_sees(cd, instance):
         "minutes": 0,
         "seconds": 0,
     }
-    assert w["tags"] == ["tag-cambios web"]
+    assert w["tags"] == ["tag-telegram"]
     out = render.results(rs, t)
     assert "Vigilo «C»" in out and "new text" in out and "dímelo" in out
 
