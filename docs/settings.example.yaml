@@ -1,0 +1,31 @@
+# SuperChangeDetection settings. Secrets never go here: they come from the environment
+# (CD_API_KEY, TELEGRAM_BOT_TOKEN, and the AI key named in llm.api_key_env).
+locale: es                 # en | es (superchangedetection/locales)
+timezone: Europe/Madrid
+
+bot:
+  chat_id: -100123456789   # the group; anyone in it may use the bot
+  users: [123456789]       # Telegram user ids that may also talk to the bot in private
+  history: 20              # recent messages the AI sees
+
+changedetection:
+  url: http://changedetection:5000
+  api_key_env: CD_API_KEY
+  default_interval: {hours: 1}
+  fetch_backend: system    # system | html_requests | html_webdriver
+  tag: Telegram            # every watch the bot creates gets this changedetection tag (group)
+  notification_format: text
+  first_check_wait_s: 90
+
+llm:
+  provider: none           # none | openai | anthropic | plugin
+  model: ""
+  base_url: ""             # openai: any OpenAI-compatible endpoint
+  api_key_env: LLM_API_KEY
+  plugin: null             # provider plugin: a .py file under the data directory
+  timeout_s: 600
+  instructions: ""         # extra rules for this instance, in any language
+
+fetch:
+  enabled: true            # give the AI the HTML of every URL in a message
+  max_kb: 400
