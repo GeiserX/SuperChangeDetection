@@ -1,0 +1,27 @@
+# Cadenas en español (claves de en.yaml).
+app_name: SuperChangeDetection
+language_name: Spanish (Spain)
+
+notification_title: "🔔 {{watch_title}}"
+notification_body: |
+  🔔 Ha cambiado «{{watch_title}}»
+  {{watch_url}}
+
+  {{diff}}
+
+  Ver el cambio: {{diff_url}}
+
+  Si esto no es un cambio de verdad, o cambia algo y no te aviso, responde a este mensaje y lo ajusto.
+  ref {{watch_uuid}}
+
+result_create_ok: "✅ Vigilo «{title}»\n{url}\n\nLo que ve ahora:\n«{seen}»"
+result_create_error: "⚠️ He creado «{title}» pero la primera comprobación ha fallado: {seen}\n{url}"
+result_update_ok: "✅ Ajustado «{title}»\n\nLo que ve ahora:\n«{seen}»"
+result_update_error: "⚠️ He ajustado «{title}» pero la comprobación ha fallado: {seen}"
+result_delete_ok: "🗑️ Borrado «{title}»\n{url}"
+result_recheck_ok: "🔄 Comprobado «{title}» ahora mismo\n\nLo que ve ahora:\n«{seen}»"
+result_recheck_error: "⚠️ La comprobación de «{title}» ha fallado: {seen}"
+result_failed: "⚠️ No he podido {op}: {error}"
+result_seen_empty: "(nada: el filtro no ha encontrado texto)"
+result_seen_pending: "(la primera comprobación aún no ha terminado; te avisaré cuando cambie, y puedes preguntarme qué ve)"
+result_footer: "Te escribo aquí cuando cambie. Si ves que cambia y no te aviso, o te aviso sin motivo, dímelo (respóndeme o mencióname) y lo arreglo."

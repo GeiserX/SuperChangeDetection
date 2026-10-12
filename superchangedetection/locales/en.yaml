@@ -1,0 +1,30 @@
+# English strings. Every other locale carries the same keys; a missing key falls back to this file.
+app_name: SuperChangeDetection
+language_name: English
+
+# What changedetection.io sends to the chat when a watch changes. Jinja tokens from changedetection:
+# watch_title, watch_url, diff, diff_url, watch_uuid, triggered_text, current_snapshot.
+notification_title: "🔔 {{watch_title}}"
+notification_body: |
+  🔔 Something changed on «{{watch_title}}»
+  {{watch_url}}
+
+  {{diff}}
+
+  See the change: {{diff_url}}
+
+  If this is not a real change, or something changed and I did not tell you, reply to this message and I will adjust the watch.
+  ref {{watch_uuid}}
+
+# What the app says after an action, in the chat
+result_create_ok: "✅ Watching «{title}»\n{url}\n\nWhat it sees now:\n«{seen}»"
+result_create_error: "⚠️ Created «{title}» but the first check failed: {seen}\n{url}"
+result_update_ok: "✅ Adjusted «{title}»\n\nWhat it sees now:\n«{seen}»"
+result_update_error: "⚠️ Adjusted «{title}» but the check failed: {seen}"
+result_delete_ok: "🗑️ Deleted «{title}»\n{url}"
+result_recheck_ok: "🔄 Checked «{title}» now\n\nWhat it sees now:\n«{seen}»"
+result_recheck_error: "⚠️ Check of «{title}» failed: {seen}"
+result_failed: "⚠️ Could not {op}: {error}"
+result_seen_empty: "(nothing: the filter matched no text)"
+result_seen_pending: "(the first check has not finished yet; I will tell you when it changes, and you can ask me what it sees)"
+result_footer: "I will write here when it changes. If you see it change and I stay silent, or I warn you for nothing, tell me (reply to me or mention me) and I will fix it."

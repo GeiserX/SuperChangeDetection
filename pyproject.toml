@@ -1,0 +1,40 @@
+[project]
+name = "superchangedetection"
+dynamic = ["version"]
+description = "Telegram bot for changedetection.io: say what to watch in the chat, the bot creates the watch and the chat is told only when the page changes"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx==0.28.1",
+    "pydantic==2.12.5",
+    "pyyaml==6.0.3",
+]
+
+[project.scripts]
+superchangedetection = "superchangedetection.cli:main"
+scd = "superchangedetection.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "superchangedetection/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["superchangedetection"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "ruff==0.17.0",
+]
