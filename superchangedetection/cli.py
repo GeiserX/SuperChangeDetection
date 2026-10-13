@@ -1,12 +1,15 @@
-"""scd: the command line. `check` proves the settings and the changedetection connection;
-`watches` lists them as the AI sees them; `apply` runs an actions block from a file, the same path
-the chat uses, so a watch can be created or fixed without the bot."""
+"""scd: the command line. `run` is the bot; `check` proves the settings and the changedetection
+connection; `watches` lists them as the AI sees them; `apply` runs an actions block from a file, the
+same path the chat uses, so a watch can be created or fixed without the bot."""
 
 from __future__ import annotations
 
 import argparse
+import logging
 import os
+import signal
 import sys
+import threading
 from pathlib import Path
 
 from . import __version__, actions, context, render
@@ -71,11 +74,26 @@ def cmd_apply(data: Data, args) -> int:
     return 0 if all(r.ok for r in rs) else 1
 
 
+def cmd_run(data: Data, args) -> int:
+    from . import bot
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    stop = threading.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stop.set())
+    bot.run(data, stop)
+    return 0
+
+
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(prog="scd", description="SuperChangeDetection")
     p.add_argument("--data", default=os.environ.get("SCD_DATA", "data"))
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("run", help="the Telegram bot")
     sub.add_parser("check", help="settings and connection check")
     w = sub.add_parser("watches", help="the watches as the AI sees them")
     w.add_argument("--chat", type=int, default=None)
@@ -85,7 +103,12 @@ def main(argv=None) -> None:
     a.add_argument("--chat", type=int, default=None, help="the chat the watch notifies")
     args = p.parse_args(argv)
     data = Data(Path(args.data))
-    code = {"check": cmd_check, "watches": cmd_watches, "rules": cmd_rules, "apply": cmd_apply}[
-        args.cmd
-    ](data, args)
+    commands = {
+        "run": cmd_run,
+        "check": cmd_check,
+        "watches": cmd_watches,
+        "rules": cmd_rules,
+        "apply": cmd_apply,
+    }
+    code = commands[args.cmd](data, args)
     sys.exit(code)

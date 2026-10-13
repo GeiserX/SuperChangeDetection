@@ -260,12 +260,13 @@ def _checked(op: str, w: dict, since: int, cd: CD, settings: Settings, url="", t
         w.get("title") or title,
         w.get("url") or url,
         pending or not w.get("last_error"),
-        "" if pending else _seen(cd, w, settings),
+        "" if pending else seen(cd, w, settings),
         pending=pending,
     )
 
 
-def _seen(cd: CD, w: dict, settings: Settings) -> str:
+def seen(cd: CD, w: dict, settings: Settings) -> str:
+    """What the watch sees now: its last error, or its latest text, trimmed."""
     if w.get("last_error"):
         return str(w["last_error"])
     text = cd.snapshot(w["uuid"]) if w.get("uuid") else ""

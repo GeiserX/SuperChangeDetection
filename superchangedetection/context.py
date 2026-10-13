@@ -98,11 +98,18 @@ def listing(cd: CD, token: str) -> list[tuple[int, str, dict]]:
     return [(n, uuid, w) for n, (uuid, w) in enumerate(order, 1)]
 
 
-def facts(cd: CD, token: str, settings: Settings, t: Translator, chat_id: int | None) -> str:
+def facts(
+    cd: CD,
+    token: str,
+    settings: Settings,
+    t: Translator,
+    chat_id: int | None,
+    rows: list | None = None,
+) -> str:
     tz = ZoneInfo(settings.timezone)
     now = dt.datetime.now(tz)
     lines = [f"# Watches as of {now:%Y-%m-%d %H:%M} ({settings.timezone})", ""]
-    rows = listing(cd, token)
+    rows = listing(cd, token) if rows is None else rows
     if not rows:
         lines.append("No watches yet.")
     for n, uuid, w in rows:
@@ -141,15 +148,15 @@ def facts(cd: CD, token: str, settings: Settings, t: Translator, chat_id: int | 
             lines.append("- paused: true")
         if w.get("notification_muted"):
             lines.append("- notifications muted")
-        lines.append(f"- last_checked: {_when(w.get('last_checked'), tz)}")
-        lines.append(f"- last_changed: {_when(w.get('last_changed'), tz)}")
+        lines.append(f"- last_checked: {when(w.get('last_checked'), tz)}")
+        lines.append(f"- last_changed: {when(w.get('last_changed'), tz)}")
         if w.get("last_error"):
             lines.append(f"- last_error: {str(w['last_error'])[:300]}")
         lines.append("")
     return "\n".join(lines)
 
 
-def _when(ts, tz) -> str:
+def when(ts, tz) -> str:
     try:
         ts = int(ts or 0)
     except (TypeError, ValueError):
@@ -159,7 +166,9 @@ def _when(ts, tz) -> str:
     return dt.datetime.fromtimestamp(ts, tz).strftime("%Y-%m-%d %H:%M")
 
 
-def files(cd: CD, token: str, settings: Settings, texts: list[str]) -> dict[str, str]:
+def files(
+    cd: CD, token: str, settings: Settings, texts: list[str], rows: list | None = None
+) -> dict[str, str]:
     """pages/<n>.html for every URL in the new messages, snapshots/ and diffs/ for every watch."""
     out: dict[str, str] = {}
     urls: list[str] = []
@@ -173,7 +182,7 @@ def files(cd: CD, token: str, settings: Settings, texts: list[str]) -> dict[str,
                 u, settings.fetch.timeout_s, settings.fetch.user_agent, settings.fetch.max_kb
             )
             out[f"pages/{n}.html"] = f"<!-- {u} -->\n{html}"
-    for _, uuid, w in listing(cd, token):
+    for _, uuid, w in listing(cd, token) if rows is None else rows:
         snap = cd.snapshot(uuid).strip()
         if snap:
             out[f"snapshots/{uuid}.txt"] = snap[: settings.snapshot_chars]

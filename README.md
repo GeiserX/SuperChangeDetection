@@ -16,6 +16,7 @@ SuperChangeDetection is a Telegram bot for a self-hosted [changedetection.io](ht
 
 - Create a watch from one chat message: the page's HTML is read and a CSS or XPath filter is chosen for you
 - Fix a noisy or blind watch by talking to it: ignore lines, require a trigger text, keep only some lines, change the interval
+- In a group the bot speaks only when mentioned or replied to; a delete needs a yes from whoever asked; a slow first check is followed up when it lands
 - Every action is validated against an allow-list before it reaches changedetection; notifications are set by the app, never by the AI
 - After each create or change the bot shows the text the watch sees now, so a wrong selector is visible at once
 - Change notifications go from changedetection straight to the chat, in your language, with a reply hint to adjust the watch
@@ -31,7 +32,7 @@ export CD_API_KEY=... TELEGRAM_BOT_TOKEN=... SCD_DATA=data
 uvx --from superchangedetection scd check
 ```
 
-`scd check` prints the instance version and the watch count when the connection works. The Docker image, the settings and the bot setup are in [Getting started](docs/getting-started.md).
+`scd check` prints the instance version and the watch count when the connection works; `scd run` is the bot. The Docker image, the settings and the bot setup are in [Getting started](docs/getting-started.md).
 
 ## Documentation
 

@@ -11,7 +11,9 @@
 
 ## One turn
 
-1. A message arrives (in the chat, or an actions file on the command line).
+1. A message arrives (in the chat, or an actions file on the command line). In the chat the line the AI
+   gets is `Name: text`; a reply to a change notification adds which watch it is about, read from the
+   `ref <uuid>` line of the notification.
 2. The app builds the AI's workspace: `CLAUDE.md`-style rules (`scd rules`), `context.md` with every watch
    numbered (title, url, filters, interval, backend, last check, last change, last error, which chat it
    notifies), `pages/<n>.html` for every URL in the new messages (scripts, styles and long attributes
@@ -41,6 +43,19 @@
    chat; every create, update and recheck triggers a check and waits up to `first_check_wait_s`.
 6. The chat gets the result: what the watch sees now (the latest snapshot, trimmed), the check's error if
    any, or a note that the check has not finished, then the standing reminder to say when a watch is wrong.
+   A delete is not run in this step: the chat gets the question with Sí and No, and only the person who
+   asked can answer it, within the hour. A check that had not finished is looked at again every half
+   minute for up to 30 minutes, and the chat is told what the watch sees once it ran.
+7. The next turn tells the AI what the app did with its block (the results as shown, a refused block
+   and why, a delete confirmed or declined), so it never has to guess.
+
+## The conversation
+
+Each chat is one conversation. A plugin provider keeps it on its side and gets only the new lines each
+turn, plus a recap of the recent ones (`bot.history` lines) for when it has to start over; the openai
+and anthropic providers get the recap every time. `/nuevo` starts over. Lines that arrive while a turn
+runs are stored in SQLite under the data directory and go with the next turn; a turn the provider did not
+keep (`kept: false`) sends them again.
 
 ## Notifications
 

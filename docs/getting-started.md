@@ -40,7 +40,16 @@ scd rules          # the AI's instructions, to read what it will and will not do
 
 ## The Telegram side
 
-The chat part of the bot (long polling, mentions, replies, confirmations) is the next milestone; today
-the same actions run from the command line with `scd apply` (see [Usage](usage.md)). Notifications
-already work the way they will with the bot: every watch created through the app notifies the chat it
-was created for, with the template from the locale file.
+`scd run` (the Docker image's default command) long-polls Telegram. Only one process may poll a bot
+token at a time; the other `scd` commands do not poll, so they are safe beside the running bot.
+
+1. Add the bot to the group and send `/chatid` there: the answer is the `bot.chat_id` for
+   `settings.yaml`. Put the user ids that may talk to it in private in `bot.users`.
+2. Make the bot an admin of the group, or turn privacy mode off in BotFather. With privacy mode on and
+   no admin rights, Telegram delivers commands and replies to the bot but not the messages that
+   mention it; the bot logs a warning at start when that is the case.
+3. At start the bot sets its command menu and descriptions in Telegram from the locale file
+   (`bot.sync_profile`), so BotFather's `/setcommands` is not needed.
+
+Then write to it: «avísame cuando cambie el precio de https://...». What it does with the message is in
+[Usage](usage.md); what the AI sees and may do, in [How it works](how-it-works.md).
