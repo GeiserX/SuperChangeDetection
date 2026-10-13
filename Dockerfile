@@ -8,4 +8,4 @@ COPY superchangedetection ./superchangedetection
 RUN uv sync --frozen --no-dev
 ENV PATH=/app/.venv/bin:$PATH SCD_DATA=/data HOME=/tmp
 USER 1000:1000
-CMD ["scd", "check"]
+CMD ["scd", "run"]

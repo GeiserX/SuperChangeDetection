@@ -25,3 +25,36 @@ result_failed: "⚠️ No he podido {op}: {error}"
 result_seen_empty: "(nada: el filtro no ha encontrado texto)"
 result_seen_pending: "(la primera comprobación aún no ha terminado; te avisaré cuando cambie, y puedes preguntarme qué ve)"
 result_footer: "Te escribo aquí cuando cambie. Si ves que cambia y no te aviso, o te aviso sin motivo, dímelo (respóndeme o mencióname) y lo arreglo."
+
+# ---- the chat
+commands:
+  lista: "Los avisos de este chat"
+  nuevo: "Empezar una conversación nueva"
+  ayuda: "Qué sé hacer"
+description: "Dime qué página quieres vigilar y te aviso cuando cambie. En un grupo, mencióname o responde a uno de mis mensajes."
+short_description: "Avisos cuando cambia una web"
+help: |
+  Dime qué quieres vigilar, con el enlace, y lo monto: por ejemplo «avísame cuando cambie el precio de https://tienda.example/teclado» o «vigila si sale una versión nueva en https://example.com/releases, mira una vez al día».
+
+  Cuando la página cambie te escribo aquí, con el cambio. Si te aviso sin motivo, o cambia algo y me callo, responde a ese mensaje (o mencióname con @{handle}) y lo ajusto.
+
+  /lista: los avisos de este chat
+  /nuevo: empezar una conversación nueva
+  /ayuda: esto
+chatid: "Este chat: {id}"
+new_ok: "Vale, empezamos de cero. Los avisos siguen como estaban."
+list_header: "Avisos de este chat ({n}):"
+list_item: "{n}. «{title}»\n{url}\nÚltimo cambio: {changed}{error}"
+list_empty: "Este chat no tiene ningún aviso todavía. Dime qué quieres vigilar."
+ai_down: "Ahora mismo no puedo pensar: el asistente no responde. Tu mensaje no se ha perdido; lo retomo con el siguiente que me escribas."
+instance_down: "No llego a changedetection ahora mismo. Vuelve a intentarlo en un rato."
+bad_actions: "He entendido lo que quieres pero me he liado al escribir el cambio y no he tocado nada. Dímelo otra vez, si puede ser de otra forma."
+button_yes: "Sí"
+button_no: "No"
+offer_delete: "¿Borro {titles}? Solo {who} puede confirmarlo."
+offer_only_asker: "Solo {who} puede responder a esto."
+offer_expired: "Esa pregunta ya caducó; pídemelo otra vez."
+offer_no: "Vale, no borro nada."
+followup_ok: "✅ Ya he hecho la primera comprobación de «{title}». Lo que ve ahora:\n«{seen}»"
+followup_error: "⚠️ La primera comprobación de «{title}» ha fallado: {seen}"
+followup_late: "⏳ La primera comprobación de «{title}» sigue sin terminar después de {minutes} minutos. Te avisaré cuando cambie; si quieres, pregúntame qué ve o pídeme que cambie el modo de descarga."
