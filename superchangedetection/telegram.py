@@ -174,13 +174,17 @@ class Telegram:
         return self.call("getChatMember", chat_id=chat_id, user_id=user_id)
 
     def set_profile(self, lang: str, commands: dict[str, str], description: str, short: str):
-        self.call(
-            "setMyCommands",
-            commands=[{"command": k, "description": v} for k, v in commands.items()],
-            language_code=lang,
-        )
-        self.call("setMyDescription", description=description[:512], language_code=lang)
-        self.call("setMyShortDescription", short_description=short[:120], language_code=lang)
+        """The command menu and the descriptions, in the default scope and for `lang`. The
+        default scope is what a Telegram client in any other language shows: with only the
+        language-specific one set, a phone in English sees no menu at all."""
+        for code in (None, lang):
+            self.call(
+                "setMyCommands",
+                commands=[{"command": k, "description": v} for k, v in commands.items()],
+                language_code=code,
+            )
+            self.call("setMyDescription", description=description[:512], language_code=code)
+            self.call("setMyShortDescription", short_description=short[:120], language_code=code)
 
 
 _TAG = re.compile(r"</?(b|i|s|u|code|pre|a)(\s[^>]*)?>")

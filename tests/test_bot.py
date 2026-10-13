@@ -336,9 +336,13 @@ def test_commands(world, instance):
 
 def test_profile_is_synced_and_the_poll_keeps_its_offset(world):
     b, ft, _ai, _ = world
-    cmds = ft.sent("setMyCommands")[0]
-    assert cmds["language_code"] == "es" and cmds["commands"][0]["command"] == "lista"
-    assert ft.sent("setMyDescription")[0]["description"].startswith("Dime")
+    cmds = ft.sent("setMyCommands")
+    # the default scope first (what a client in any language shows), then the locale's
+    assert [c.get("language_code") for c in cmds] == [None, "es"]
+    assert all(c["commands"][0]["command"] == "lista" for c in cmds)
+    descs = ft.sent("setMyDescription")
+    assert [d.get("language_code") for d in descs] == [None, "es"]
+    assert descs[0]["description"].startswith("Dime")
     ft.updates = [{"update_id": 7, "message": message("/chatid")}]
     assert b.poll_once() == 0
     assert b.db.get_kv("offset") == 8 and str(GROUP) in ft.texts()[-1]
