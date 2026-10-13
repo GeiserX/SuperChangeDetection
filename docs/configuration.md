@@ -18,7 +18,7 @@ from the environment only. Defaults are the values shown.
 |---|---|---|
 | `token_env` | `TELEGRAM_BOT_TOKEN` | env var holding the bot token |
 | `chat_id` | none | the group; anyone in it may use the bot |
-| `users` | `[]` | Telegram user ids that may also talk to the bot in private |
+| `users` | `[]` | Telegram user ids that may also talk to the bot in private, and the only ones who may ask for a proposal |
 | `handles` | `{}` | user id (as a string) to `@handle`; looked up from Telegram when left out |
 | `history` | `20` | recent messages kept as context for the AI |
 | `sync_profile` | `true` | set the bot's command menu and descriptions in Telegram at start |
@@ -49,6 +49,20 @@ from the environment only. Defaults are the values shown.
 | `timeout_s` | `600` | how long one answer may take |
 | `instructions` | `""` | extra rules for this instance, appended to the AI's rules, in any language |
 
+## `transcription`
+
+Voice notes. With a provider, a voice note from someone allowed is always answered, in the group too.
+
+| key | default | meaning |
+|---|---|---|
+| `provider` | `none` | `none`, `openai` (any `/audio/transcriptions` endpoint: OpenAI, faster-whisper-server), `plugin` |
+| `base_url` | `""` | openai: the endpoint |
+| `model` | `whisper-1` | model name |
+| `api_key_env` | `STT_API_KEY` | env var holding the key |
+| `language` | none | ISO code; unset lets the model detect it |
+| `plugin` | none | provider `plugin`: a `.py` file under the data directory defining `transcribe(audio: bytes, filename: str, settings: dict) -> str` |
+| `timeout_s` | `300` | how long one transcription may take |
+
 ### The plugin contract
 
 `provider: plugin` loads the file named in `plugin` (it must live under the data directory) and calls:
@@ -67,6 +81,20 @@ Return the answer, or `{"text", "conversation", "kept"}`: the app keeps `convers
 it back next time; `kept: false` means the provider did not store this turn, so the lines go again with the
 next one. The plugin must return before `timeout_s`. The answer may end with one `actions` block
 ([How it works](how-it-works.md)); the app validates it.
+
+A plugin may also define
+
+```python
+def act(proposal: dict, settings: dict) -> str | dict: ...  # optional: carry out a proposal
+```
+
+Then the app sets `turn["proposals"] = True`, and the answer dict may carry `"proposals": [{"id",
+"summary", "confirm_by": "none" | "asker" | "admins", ...}]`: things the plugin would do outside the chat
+(open and merge a change to the bot's own code, for example). The app shows each `summary`; `none` runs
+`act()` at once in the background, `asker` after a yes from the person who asked, `admins` after a yes from
+one of `bot.users`. Only `bot.users` may ask for a proposal. `act()` gets the same dict and returns the text
+to post, or `{"text", "proposals"}` with follow-ups, offered the same way. It may take up to an hour; the
+chat is told if the bot restarts in the middle.
 
 ## `fetch`
 

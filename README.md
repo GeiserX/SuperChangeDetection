@@ -19,7 +19,9 @@ SuperChangeDetection is a Telegram bot for a self-hosted [changedetection.io](ht
 - In a group the bot speaks only when mentioned or replied to; a delete needs a yes from whoever asked; a slow first check is followed up when it lands
 - Every action is validated against an allow-list before it reaches changedetection; notifications are set by the app, never by the AI
 - After each create or change the bot shows the text the watch sees now, so a wrong selector is visible at once
-- Change notifications go from changedetection straight to the chat, in your language, with a reply hint to adjust the watch
+- Change notifications go from changedetection straight to the chat, in your language: what changed and a link to see it, with a reply hint to adjust the watch
+- Voice notes are always answered when a transcription provider is set, in the group too
+- A plugin can carry out proposals, so the bot can change how it works when someone asks; `/presentacion` tells the chat what it can do here
 - English base with a Spanish translation; every string lives in a locale file
 - AI provider of your choice: any OpenAI-compatible endpoint, Anthropic, or a plugin file
 - The instance is the source of truth: the bot keeps no copy of the watches

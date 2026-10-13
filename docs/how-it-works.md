@@ -62,8 +62,28 @@ keep (`kept: false`) sends them again.
 Every watch the bot creates carries one apprise URL, `tgram://<bot token>/<chat id>/`, so changedetection
 sends the change to the chat as the bot, with no code of ours in the path. The title and body are the
 `notification_title` and `notification_body` strings of the locale file, in changedetection's Jinja
-syntax; the body ends with `ref <uuid>` so a reply to that message can be tied to the watch. That URL is
-also how the app knows which watches are its own and which chat each one belongs to.
+syntax: the watch's title and URL, a link to the change on the instance (`{{diff_url}}`, which needs
+`BASE_URL` set on changedetection), the reminder to reply when the watch is wrong, and a last line
+`ref <uuid>` so a reply to that message can be tied to the watch. No diff: the person clicks the link and
+reads the change on the instance. At start the bot puts the current template on every watch it owns, so
+a change to those strings reaches the old watches too. That URL is also how the app knows which watches
+are its own and which chat each one belongs to.
+
+## Voice notes
+
+With a `transcription` provider, a voice note from someone allowed is always handled, in the group too,
+since a note cannot mention the bot or reply by itself: the audio is fetched from Telegram, transcribed,
+echoed as a reply (`🎤 …`) so everyone sees what was heard, and then treated as typed text. A note that
+could not be transcribed gets a short reply saying so.
+
+## Proposals
+
+A plugin provider that defines `act()` may answer with proposals: things it would do outside the chat,
+such as changing the bot's own code. The app shows each summary; with `confirm_by: none` it runs `act()`
+at once in the background and posts what came of it, with `asker` after a yes from the person who
+asked, with `admins` after a yes from one of `bot.users`. Only `bot.users` may ask for a proposal. A
+proposal that was running when the bot stopped is reported as interrupted at the next start. The chat
+never sees code: what the plugin says about a change is its own text.
 
 ## What the AI may and may not do
 

@@ -13,6 +13,13 @@ the answer.
   runs only after the person who asked says yes, within the hour.
 - A create or update whose first check had not finished is followed up: the bot looks again every
   half minute and posts what the watch sees once the check ran.
+- A voice note from someone allowed is always answered, in the group too (it cannot mention the
+  bot or reply by itself): the transcript is echoed as a reply, then handled as typed text.
+- A proposal from the provider (something it would do outside the chat, such as changing the
+  bot's own code) is shown; `confirm_by` none runs at once in the background, the others wait for
+  a yes from the asker or from one of `bot.users`. Only `bot.users` may ask for one.
+- At start every watch the bot owns gets the app's current notification template, so a template
+  change in the locale reaches the old watches too.
 
 The service log gets event kinds and counts, never a message text or a watch's content.
 """
@@ -57,7 +64,10 @@ COMMANDS = {
     "new": "new",
     "nuevo": "new",
     "chatid": "chatid",
+    "presentacion": "intro",
+    "intro": "intro",
 }
+RUNNING = "running"  # proposals being carried out now, across every chat
 YES = {"si", "yes", "vale", "ok", "s", "y", "dale"}
 NO = {"no", "n", "nope"}
 
@@ -107,6 +117,7 @@ class Bot:
         self.token = data.secret(self.s.bot.token_env)
         self.db = DB(data.state / "bot.sqlite")
         self.me: dict = {}
+        self.mentions_ok = True  # the group's @mentions reach the bot (admin, or privacy off)
         self.workers: dict[int, Worker] = {}
         self._lock = threading.Lock()
 
@@ -129,17 +140,62 @@ class Bot:
                 )
             except TelegramError as e:
                 log.warning("profile sync failed: %s", safe(e))
+        self.check_group()
+        self.sync_notifications()
+        self.interrupted()
+
+    def check_group(self) -> None:
+        """Whether the group's @mentions reach the bot: they do not with privacy mode on unless it
+        is an admin of the group."""
         group = self.group()
-        if group and not self.me.get("can_read_all_group_messages"):
+        if not group or self.me.get("can_read_all_group_messages"):
+            return
+        try:
+            m = self.tg.get_chat_member(group, self.me.get("id"))
+        except TelegramError as e:
+            log.info("could not check the bot's rights in the group: %s", safe(e))
+            return
+        if m.get("status") not in ("administrator", "creator"):
+            self.mentions_ok = False
+            log.warning(
+                "privacy mode is on and the bot is not an admin of the group: it sees "
+                "commands and replies, not @mentions (make it an admin, or /setprivacy)"
+            )
+
+    def sync_notifications(self) -> None:
+        """Every watch the bot owns carries the app's current notification template (title, body,
+        format), so a change in the locale reaches the watches made before it."""
+        try:
+            ws = self.cd.watches()
+        except CDError as e:
+            log.warning("notification sync skipped: %s", safe(e))
+            return
+        n = 0
+        for uuid_, w in ws.items():
+            chat = notifies(w, self.token)
+            if chat is None:
+                continue
+            want = actions.notification(self.s, self.token, chat, self.t)
+            fields = {
+                k: v
+                for k, v in want.items()
+                if k.startswith("notification_")
+                and k not in ("notification_urls", "notification_muted")
+                if w.get(k) != v
+            }
+            if not fields:
+                continue
             try:
-                m = self.tg.get_chat_member(group, self.me.get("id"))
-                if m.get("status") not in ("administrator", "creator"):
-                    log.warning(
-                        "privacy mode is on and the bot is not an admin of the group: it sees "
-                        "commands and replies, not @mentions (make it an admin, or /setprivacy)"
-                    )
-            except TelegramError as e:
-                log.info("could not check the bot's rights in the group: %s", safe(e))
+                self.cd.update(uuid_, fields)
+                n += 1
+            except CDError as e:
+                log.warning("notification sync failed for a watch: %s", safe(e))
+        if n:
+            log.info("notification template updated on %d watches", n)
+
+    def later(self, fn, *args) -> None:
+        """Run `fn` on its own thread: a transcription or a proposal must not hold the poll."""
+        threading.Thread(target=fn, args=args, daemon=True).start()
 
     def run(self, stop: threading.Event) -> None:
         self.start()
@@ -211,6 +267,11 @@ class Bot:
             log.warning("the group became a supergroup; update bot.chat_id when convenient")
             return
         text = msg.get("text") or msg.get("caption") or ""
+        voice = msg.get("voice") or msg.get("audio")
+        if voice and not text:
+            if self.allowed(chat, user) and self.s.transcription.provider != "none":
+                self.later(self.voice, msg)
+            return
         if not text or not self.allowed(chat, user):
             return
         chat_id = int(chat["id"])
@@ -226,6 +287,11 @@ class Bot:
         content = self.addressed(msg, text, private)
         if content is None:
             return
+        self.enqueue(chat_id, msg, content)
+
+    def enqueue(self, chat_id: int, msg: dict, content: str) -> None:
+        """A line for the AI, tied to the watch when the message replies to a notification."""
+        user = msg.get("from") or {}
         ref = None
         if self.from_me(msg.get("reply_to_message")):
             found = REF.search(msg["reply_to_message"].get("text") or "")
@@ -243,6 +309,25 @@ class Bot:
         )
         self.worker(chat_id).kick()
 
+    def voice(self, msg: dict) -> None:
+        """A voice note: fetched from Telegram, transcribed, echoed as a reply so everyone sees what
+        was heard, then handled as typed text. A failure tells the chat."""
+        chat_id = int((msg.get("chat") or {})["id"])
+        voice = msg.get("voice") or msg.get("audio") or {}
+        try:
+            f = self.tg.get_file(voice.get("file_id"))
+            path = str(f.get("file_path") or "")
+            name = path.rsplit("/", 1)[-1] or "voice.ogg"
+            text = llm.transcribe(self.data, self.tg.download(path), name)
+        except Exception as e:  # noqa: BLE001 - the provider's text may quote anything
+            log.warning("transcription failed for chat %s: %s", chat_id, safe(e))
+            text = ""
+        if not text:
+            self.send(chat_id, self.t("voice_failed"), reply_to=msg.get("message_id"), plain=True)
+            return
+        self.send(chat_id, f"🎤 {text}", reply_to=msg.get("message_id"), plain=True)
+        self.enqueue(chat_id, msg, text)
+
     def addressed(self, msg: dict, text: str, private: bool) -> str | None:
         """The text without the bot's @handle when the bot should answer it, else None."""
         if private:
@@ -257,8 +342,37 @@ class Bot:
 
     # ---- commands
 
+    def extras(self) -> dict:
+        """What the help and the introduction say only when it is true of this instance."""
+        voice = self.s.transcription.provider != "none"
+        changes = llm.can_act(self.data)
+        return {
+            "handle": self.handle,
+            "voice": self.t("help_voice") if voice else "",
+            "changes": self.t("help_changes") if changes else "",
+            "intro_voice": self.t("intro_voice") if voice else "",
+            "intro_changes": self.t("intro_changes") if changes else "",
+            "mentions": "" if self.mentions_ok else self.t("intro_mentions"),
+        }
+
+    def intro(self) -> str:
+        x = self.extras()
+        text = self.t(
+            "intro",
+            handle=x["handle"],
+            voice=x["intro_voice"],
+            changes=x["intro_changes"],
+            mentions=x["mentions"],
+        )
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
+
     def cmd_help(self, chat: int, msg: dict) -> None:
-        self.send(chat, self.t("help", handle=self.handle), plain=True)
+        x = self.extras()
+        text = self.t("help", handle=x["handle"], voice=x["voice"], changes=x["changes"])
+        self.send(chat, re.sub(r"\n{3,}", "\n\n", text).strip(), plain=True)
+
+    def cmd_intro(self, chat: int, msg: dict) -> None:
+        self.send(chat, self.intro(), plain=True)
 
     def cmd_chatid(self, chat: int, msg: dict) -> None:
         self.send(chat, self.t("chatid", id=chat), plain=True)
@@ -353,7 +467,7 @@ class Bot:
             if note:
                 self.db.add_chat(chat, "app", None, note)
         log.info("turn for chat %s: %d lines, kept=%s", chat, len(rows), reply.kept)
-        self.answer(chat, reply.text, rows[-1], listing)
+        self.answer(chat, reply, rows[-1], listing)
 
     def line(self, row: dict, listing: list) -> str:
         who = row.get("who") or "someone"
@@ -367,8 +481,8 @@ class Bot:
             return f"{who} ({where}): {row['text']}"
         return f"{who}: {row['text']}"
 
-    def answer(self, chat: int, text: str, last: dict, listing: list) -> None:
-        reply_to = last.get("msg")
+    def answer(self, chat: int, reply: llm.Reply, last: dict, listing: list) -> None:
+        text, reply_to = reply.text, last.get("msg")
         try:
             clean, acts = actions.extract(text)
             if acts:
@@ -389,10 +503,8 @@ class Bot:
             self.db.add_chat(chat, "assistant", None, clean)
             self.send(chat, render.to_html(clean), reply_to=reply_to)
             reply_to = None
-        if not acts:
-            return
-        now = [a for a in acts if a.op != "delete"]
-        deletes = [a for a in acts if a.op == "delete"]
+        now = [a for a in acts or [] if a.op != "delete"]
+        deletes = [a for a in acts or [] if a.op == "delete"]
         notes = []
         if now:
             rs = actions.apply(self.cd, now, self.s, self.token, chat, self.t)
@@ -411,6 +523,8 @@ class Bot:
             )
         if notes:
             self.db.set_kv(f"app:{chat}", "\n".join(notes))
+        for p in reply.proposals:
+            self.offer_proposal(chat, last, p)
 
     def _typing(self, chat: int, stop: threading.Event) -> None:
         while True:
@@ -436,7 +550,9 @@ class Bot:
         ]
         offer = {
             "id": uuid.uuid4().hex[:8],
+            "kind": "delete",
             "asker": last.get("user"),
+            "by": [last.get("user")],
             "who": last.get("who"),
             "items": items,
             "expires": _now() + OFFER_TTL_S,
@@ -460,6 +576,106 @@ class Bot:
         offer["msg"] = (sent or {}).get("message_id")
         self.db.set_kv(f"offer:{chat}", offer)
 
+    # ---- proposals
+
+    def offer_proposal(self, chat: int, last: dict, p: dict) -> None:
+        """Something the provider would do outside the chat. Only `bot.users` may ask; a step with
+        confirm_by none runs at once in the background, the others wait for the right yes."""
+        reply_to = last.get("msg")
+        if last.get("user") not in self.s.bot.users:
+            self.send(chat, self.t("proposal_members_only"), reply_to=reply_to, plain=True)
+            return
+        pending = {
+            "proposal": p,
+            "chat": chat,
+            "asker": last.get("user"),
+            "who": last.get("who"),
+            "reply_to": reply_to,
+        }
+        if p["confirm_by"] == "none":
+            self.send(chat, p["summary"], reply_to=reply_to, plain=True)
+            self.later(self.act, pending)
+            return
+        asker_only = p["confirm_by"] == "asker"
+        offer = {
+            "id": uuid.uuid4().hex[:8],
+            "kind": "proposal",
+            "asker": last.get("user"),
+            "by": [last.get("user")] if asker_only else list(self.s.bot.users),
+            "who": last.get("who"),
+            "pending": pending,
+            "expires": _now() + OFFER_TTL_S,
+        }
+        markup = {
+            "inline_keyboard": [
+                [
+                    {"text": self.t("button_yes"), "callback_data": f"prop:{offer['id']}:y"},
+                    {"text": self.t("button_no"), "callback_data": f"prop:{offer['id']}:n"},
+                ]
+            ]
+        }
+        key = "offer_proposal" if asker_only else "offer_proposal_users"
+        sent = self.send(
+            chat,
+            self.t(key, summary=p["summary"], who=offer["who"]),
+            reply_to=reply_to,
+            markup=markup,
+            plain=True,
+        )
+        offer["msg"] = (sent or {}).get("message_id")
+        self.db.set_kv(f"offer:{chat}", offer)
+
+    def act(self, pending: dict) -> None:
+        """Have the provider carry out a proposal and post what came of it; follow-ups are offered
+        on behalf of the same asker. While it runs it is written down, so a restart can say it was
+        cut off instead of leaving the asker waiting."""
+        chat, reply_to = pending["chat"], pending.get("reply_to")
+        mark = {"id": uuid.uuid4().hex[:8], "chat": chat, "reply_to": reply_to}
+        self._mark(mark, True)
+        try:
+            out = llm.act(self.data, pending["proposal"])
+        except Exception as e:  # noqa: BLE001 - the provider's text may quote anything
+            log.warning("a proposal failed for chat %s: %s", chat, safe(e))
+            said = (
+                self.t("proposal_unsupported")
+                if isinstance(e, llm.NoAct)
+                else self.t("proposal_failed", error=safe(e))
+            )
+            self.send(chat, said, reply_to=reply_to, plain=True)
+            self.note(chat, "A proposal failed, as shown to the chat: " + said)
+            return
+        finally:
+            self._mark(mark, False)
+        if out.text:
+            self.db.add_chat(chat, "assistant", None, out.text)
+            self.send(chat, out.text, reply_to=reply_to, plain=True)
+            self.note(chat, "Outcome of the proposal, as shown to the chat:\n" + out.text)
+        for p in out.proposals:
+            last = {"user": pending["asker"], "who": pending["who"], "msg": reply_to}
+            self.offer_proposal(chat, last, p)
+
+    def _mark(self, mark: dict, on: bool) -> None:
+        with self._lock:
+            marks = [m for m in self.db.get_kv(RUNNING) or [] if m.get("id") != mark["id"]]
+            self.db.set_kv(RUNNING, ([*marks, mark] if on else marks) or None)
+
+    def interrupted(self) -> None:
+        """Once at start: tell each chat whose proposal was running when the bot stopped that it
+        was cut off, so the asker knows to ask again."""
+        for m in self.db.get_kv(RUNNING) or []:
+            self.send(
+                m["chat"], self.t("proposal_interrupted"), reply_to=m.get("reply_to"), plain=True
+            )
+        self.db.set_kv(RUNNING, None)
+
+    def note(self, chat: int, text: str) -> None:
+        """A line the AI gets with the next turn, after what is already waiting."""
+        with self._lock:
+            old = self.db.get_kv(f"app:{chat}")
+            self.db.set_kv(f"app:{chat}", f"{old}\n{text}" if old else text)
+
+    # ---- the open offer of a chat: a delete or a proposal, with Sí and No
+
     def open_offer(self, chat: int) -> dict | None:
         offer = self.db.get_kv(f"offer:{chat}")
         if offer and offer.get("expires", 0) >= _now():
@@ -474,7 +690,7 @@ class Bot:
         chat = (msg.get("chat") or {}).get("id")
         user = cq.get("from") or {}
         parts = data.split(":")
-        if chat is None or len(parts) != 3 or parts[0] != "del":
+        if chat is None or len(parts) != 3 or parts[0] not in ("del", "prop"):
             return
         chat = int(chat)
         offer = self.open_offer(chat)
@@ -482,8 +698,8 @@ class Bot:
             self._cb(cq, self.t("offer_expired"))
             self._unmark(chat, msg.get("message_id"))
             return
-        if user.get("id") != offer.get("asker"):
-            self._cb(cq, self.t("offer_only_asker", who=offer.get("who")))
+        if user.get("id") not in self.answerers(offer):
+            self._cb(cq, self.refusal(offer))
             return
         self._cb(cq)
         self._unmark(chat, offer.get("msg"))
@@ -493,7 +709,7 @@ class Bot:
         """A typed yes or no from the asker, replying to the offer or while the offer is the bot's
         latest message in the chat."""
         offer = self.open_offer(chat)
-        if not offer or (msg.get("from") or {}).get("id") != offer.get("asker"):
+        if not offer or (msg.get("from") or {}).get("id") not in self.answerers(offer):
             return False
         word = _word(msg.get("text") or "")
         if word not in YES and word not in NO:
@@ -509,8 +725,25 @@ class Bot:
         self.resolve_offer(chat, offer, word in YES, reply_to=msg.get("message_id"))
         return True
 
+    @staticmethod
+    def answerers(offer: dict) -> list:
+        return offer.get("by") or [offer.get("asker")]
+
+    def refusal(self, offer: dict) -> str:
+        if len(self.answerers(offer)) == 1:
+            return self.t("offer_only_asker", who=offer.get("who"))
+        return self.t("offer_only_users")
+
     def resolve_offer(self, chat: int, offer: dict, yes: bool, reply_to: int | None = None) -> None:
         self.db.set_kv(f"offer:{chat}", None)
+        if offer.get("kind") == "proposal":
+            if not yes:
+                self.send(chat, self.t("offer_proposal_no"), reply_to=reply_to, plain=True)
+                self.note(chat, "The proposal was declined; nothing was done.")
+                return
+            pending = {**offer["pending"], "reply_to": reply_to or offer["pending"].get("reply_to")}
+            self.later(self.act, pending)
+            return
         if not yes:
             self.send(chat, self.t("offer_no"), reply_to=reply_to, plain=True)
             self.db.set_kv(f"app:{chat}", "The asker answered no: nothing was deleted.")

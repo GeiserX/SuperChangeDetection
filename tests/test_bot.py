@@ -36,6 +36,8 @@ class FakeTelegram:
         assert f"/bot{TOKEN}/" in request.url.path
         params = json.loads(request.content) if request.content else {}
         self.calls.append((method, params))
+        if "/file/bot" in request.url.path:  # the download of a file
+            return httpx.Response(200, content=b"OggS")
         if method == "getMe":
             return self._ok(
                 {"id": BOT_ID, "username": "watch_bot", "can_read_all_group_messages": False}
@@ -53,6 +55,8 @@ class FakeTelegram:
             return self._ok({"message_id": _MSG[0], "chat": {"id": params["chat_id"]}})
         if method == "getChatMember":
             return self._ok({"status": "member"})
+        if method == "getFile":
+            return self._ok({"file_id": params["file_id"], "file_path": "voice/1.oga"})
         return self._ok(True)
 
     @staticmethod
@@ -436,3 +440,213 @@ def test_markdown_becomes_telegram_html():
         '<b>Título</b>\n• <b>negrita</b> y <code>code</code> y <a href="https://x.example/a_(b)">link</a> &lt;b&gt;'
     )
     assert re.search(r"<pre>x\n</pre>|<pre>x</pre>", to_html("```py\nx\n```"))
+
+
+# ---- voice notes
+
+
+def voice_note(chat=GROUP, user=ANA, reply_to=None):
+    msg = message("", chat=chat, user=user, reply_to=reply_to)
+    del msg["text"]
+    msg["voice"] = {"file_id": "f1", "duration": 3}
+    return msg
+
+
+@pytest.fixture
+def inline(monkeypatch):
+    """`later` runs the function in this thread, so a test sees the outcome at once."""
+
+    def later(self, fn, *args):
+        fn(*args)
+
+    monkeypatch.setattr(Bot, "later", later)
+
+
+def test_a_voice_note_is_always_answered_even_unaddressed_in_the_group(world, inline, monkeypatch):
+    b, ft, ai, _ = world
+    b.s.transcription.provider = "plugin"
+    heard = []
+
+    def transcribe(data_, audio, filename):
+        heard.append((audio, filename))
+        return "vigila la página de entradas"
+
+    monkeypatch.setattr(llm, "transcribe", transcribe)
+    b.on_message(voice_note())  # no mention, no reply: a note cannot carry either
+    assert heard[0][1] == "1.oga" and ft.sent("getFile")[0]["file_id"] == "f1"
+    echo = ft.sent()[-1]
+    assert echo["text"] == "🎤 vigila la página de entradas"
+    assert echo["reply_parameters"]["message_id"]
+    assert b.db.unsent(GROUP)[0]["text"] == "vigila la página de entradas"
+    b.turn(GROUP)
+    assert ai["turns"][-1]["new"][-1]["content"] == "Ana: vigila la página de entradas"
+    b.on_message(voice_note(user=LUIS, chat=LUIS))  # a stranger's note is ignored
+    assert len(heard) == 1
+    b.s.transcription.provider = "none"
+    b.on_message(voice_note())  # no provider: nothing happens
+    assert len(heard) == 1
+
+
+def test_a_failed_transcription_tells_the_chat(world, inline, monkeypatch):
+    b, ft, _ai, _ = world
+    b.s.transcription.provider = "plugin"
+    monkeypatch.setattr(llm, "transcribe", lambda *_: (_ for _ in ()).throw(RuntimeError("x")))
+    b.on_message(voice_note())
+    assert "nota de voz" in ft.texts()[-1] and not b.db.unsent(GROUP)
+
+
+# ---- proposals
+
+
+def test_a_proposal_with_no_confirmation_runs_in_the_background_and_reports(
+    world, inline, monkeypatch
+):
+    b, ft, ai, _ = world
+    acted = []
+
+    def act(data_, proposal):
+        acted.append(proposal["id"])
+        return Reply("Hecho: fusionado.", proposals=[])
+
+    monkeypatch.setattr(llm, "act", act)
+    monkeypatch.setattr(llm, "can_act", lambda data_: True)
+    p = {"id": "p1", "summary": "Me pongo con ello.", "confirm_by": "none", "what": "x"}
+    ai["answers"] = [Reply("Vale, lo cambio.", conversation="c1", proposals=[p])]
+    turn(b, message("@watch_bot añade un comando"))
+    assert ft.texts()[-3:] == ["Vale, lo cambio.", "Me pongo con ello.", "Hecho: fusionado."]
+    assert acted == ["p1"] and b.db.get_kv(botmod.RUNNING) is None
+    turn(b, message("@watch_bot gracias"))
+    assert "Hecho: fusionado." in ai["turns"][-1]["new"][0]["content"]
+    # someone outside bot.users cannot ask for one
+    ai["answers"] = [Reply("Vale.", conversation="c1", proposals=[p])]
+    turn(b, message("@watch_bot otro", user=LUIS, name="Luis"))
+    assert "quien me administra" in ft.texts()[-1] and acted == ["p1"]
+
+
+def test_a_proposal_for_the_asker_waits_for_their_yes(world, inline, monkeypatch):
+    b, ft, ai, _ = world
+    acted = []
+    monkeypatch.setattr(llm, "act", lambda d, p: (acted.append(p["id"]), Reply("Abierta."))[1])
+    p = {"id": "p2", "summary": "Abriría el cambio.", "confirm_by": "asker"}
+    ai["answers"] = [Reply("", conversation="c1", proposals=[p])]
+    turn(b, message("@watch_bot cámbialo"))
+    offer = ft.sent()[-1]
+    assert offer["text"].startswith("Abriría el cambio.") and "Ana" in offer["text"]
+    buttons = offer["reply_markup"]["inline_keyboard"][0]
+    cq = {
+        "id": "q",
+        "from": {"id": LUIS},
+        "message": {"message_id": offer_id(b), "chat": {"id": GROUP}},
+        "data": buttons[0]["callback_data"],
+    }
+    b.on_callback(cq)
+    assert acted == [] and "Solo Ana" in ft.sent("answerCallbackQuery")[-1]["text"]
+    b.on_callback({**cq, "from": {"id": ANA}})
+    assert acted == ["p2"] and ft.texts()[-1] == "Abierta."
+    # a typed no closes one that any user may answer
+    ai["answers"] = [Reply("", conversation="c1", proposals=[{**p, "confirm_by": "admins"}])]
+    turn(b, message("@watch_bot otra vez"))
+    assert "quien me administra" in ft.texts()[-1]
+    b.on_message(message("no", reply_to={"message_id": offer_id(b), "from": {"id": BOT_ID}}))
+    assert "no lo hago" in ft.texts()[-1] and acted == ["p2"]
+
+
+def offer_id(b: Bot) -> int:
+    return b.db.get_kv(f"offer:{GROUP}")["msg"]
+
+
+def test_a_failed_proposal_and_an_interrupted_one_are_reported(world, inline, monkeypatch):
+    b, ft, _ai, _ = world
+    monkeypatch.setattr(llm, "act", lambda d, p: (_ for _ in ()).throw(RuntimeError("boom")))
+    b.act({"proposal": {"id": "x"}, "chat": GROUP, "asker": ANA, "who": "Ana", "reply_to": 1})
+    assert "No ha salido bien" in ft.texts()[-1]
+    b.db.set_kv(botmod.RUNNING, [{"id": "m", "chat": GROUP, "reply_to": 1}])
+    b.start()
+    assert "Me reinicié" in ft.texts()[-1] and b.db.get_kv(botmod.RUNNING) is None
+
+
+# ---- the template and the introduction
+
+
+def test_the_notification_template_is_synced_onto_the_bots_watches_at_start(world, instance):
+    b, _ft, _ai, inst = world
+    inst.watches[U1]["notification_body"] = "old"
+    inst.watches[U2]["notification_body"] = "old"  # not the bot's: left alone
+    inst.calls.clear()  # start() synced once already
+    b.sync_notifications()
+    assert "Ver el cambio: {{diff_url}}" in inst.watches[U1]["notification_body"]
+    assert "{{diff}}" not in inst.watches[U1]["notification_body"]
+    assert inst.watches[U2]["notification_body"] == "old"
+    puts = [c for c in inst.calls if c[0] == "PUT"]
+    assert len(puts) == 1
+    inst.calls.clear()
+    b.sync_notifications()  # nothing to do the second time
+    assert not [c for c in inst.calls if c[0] == "PUT"]
+
+
+def test_the_intro_says_what_is_true_of_this_instance(world, monkeypatch):
+    b, ft, _ai, _ = world
+    b.on_message(message("/presentacion"))
+    text = ft.texts()[-1]
+    assert text.startswith("¡Hola! Soy @watch_bot") and "\n\n\n" not in text
+    assert "administrador" in text  # privacy on and not an admin: mentions do not arrive
+    assert "notas de voz" not in text and "otra forma" not in text
+    b.s.transcription.provider = "plugin"
+    monkeypatch.setattr(llm, "can_act", lambda data_: True)
+    b.mentions_ok = True
+    assert "notas de voz" in b.intro() and "lo cambio yo" in b.intro()
+    assert "administrador" not in b.intro()
+    b.on_message(message("/ayuda"))
+    assert "lo cambio yo" in ft.texts()[-1] and "/presentacion" in ft.texts()[-1]
+
+
+def test_plugin_act_and_transcribe_are_loaded_and_missing_act_is_no_act(tmp_path, monkeypatch):
+    (tmp_path / "plugins").mkdir()
+    (tmp_path / "plugins" / "p.py").write_text(
+        "def converse(turn, settings):\n"
+        "    assert turn['proposals'] is True\n"
+        "    return {'text': 'ok', 'proposals': [{'id': 'a', 'summary': ' s ', 'confirm_by': 'none'},"
+        " {'id': 'b', 'summary': 's', 'confirm_by': 'boss'}, 'junk'], 'kept': True}\n"
+        "def act(proposal, settings):\n"
+        "    return {'text': 'done ' + proposal['id'], 'proposals': []}\n"
+        "def transcribe(audio, filename, settings):\n"
+        "    return f'{len(audio)} {filename} {settings[\"language\"]}'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "settings.yaml").write_text(
+        "llm:\n  provider: plugin\n  plugin: plugins/p.py\n"
+        "transcription:\n  provider: plugin\n  plugin: plugins/p.py\n  language: es\n",
+        encoding="utf-8",
+    )
+    data = Data(tmp_path)
+    assert llm.can_act(data)
+    r = llm.converse(data, {"new": []})
+    assert r.proposals == [{"id": "a", "summary": "s", "confirm_by": "none"}]
+    assert llm.act(data, {"id": "a"}).text == "done a"
+    assert llm.transcribe(data, b"abc", "v.oga") == "3 v.oga es"
+    (tmp_path / "plugins" / "q.py").write_text("def converse(t, s):\n    return 'x'\n")
+    (tmp_path / "settings.yaml").write_text("llm:\n  provider: plugin\n  plugin: plugins/q.py\n")
+    data = Data(tmp_path)
+    assert not llm.can_act(data) and llm.converse(data, {"new": []}).proposals == []
+    with pytest.raises(llm.NoAct):
+        llm.act(data, {"id": "a"})
+    with pytest.raises(llm.LLMError):
+        llm.transcribe(data, b"", "v.oga")
+
+
+def test_openai_transcription_posts_the_audio(tmp_path, monkeypatch):
+    posted = []
+
+    def post(url, data, files, headers, timeout):
+        posted.append((url, data, files, headers))
+        return httpx.Response(200, json={"text": " hola "})
+
+    monkeypatch.setattr(httpx, "post", post)
+    monkeypatch.setenv("STT_API_KEY", "k")
+    (tmp_path / "settings.yaml").write_text(
+        "transcription:\n  provider: openai\n  language: es\n", encoding="utf-8"
+    )
+    assert llm.transcribe(Data(tmp_path), b"abc", "v.oga") == "hola"
+    url, form, files, headers = posted[0]
+    assert url.endswith("/audio/transcriptions") and form["language"] == "es"
+    assert files["file"] == ("v.oga", b"abc") and headers["Authorization"] == "Bearer k"
