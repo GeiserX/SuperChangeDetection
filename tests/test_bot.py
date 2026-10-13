@@ -362,7 +362,9 @@ def test_long_and_bad_html_answers_still_arrive(world):
 
 def test_token_never_appears_in_an_error(world):
     _b, _ft, _ai, _ = world
-    real = "1234567890:AAEabcdefghijklmnopqrstuvwxyz012345"
+    real = (
+        "1234567890:" + "AAE" + "x" * 32
+    )  # shaped like a bot token, built here so no scanner trips
     err = TelegramError("sendMessage", 400, f"bad https://api.telegram.org/bot{real}/x")
     assert real not in str(err) and "<token>" in str(err)
     assert real not in botmod.safe(httpx.HTTPError(f"boom {real}"))

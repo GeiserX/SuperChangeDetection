@@ -54,8 +54,8 @@ from the environment only. Defaults are the values shown.
 `provider: plugin` loads the file named in `plugin` (it must live under the data directory) and calls:
 
 ```python
-def converse(turn: dict, settings: dict) -> str | dict: ...   # required
-def forget(conversation: str, settings: dict) -> None: ...   # optional, on /nuevo
+def converse(turn: dict, settings: dict) -> str | dict: ...  # required
+def forget(conversation: str, settings: dict) -> None: ...  # optional, on /nuevo
 ```
 
 `turn` has `conversation` (what the plugin returned last time in this chat, or `None`), `rules`
