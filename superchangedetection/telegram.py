@@ -59,6 +59,7 @@ def safe(e: BaseException) -> str:
 class Telegram:
     def __init__(self, token: str, base: str = API, client: httpx.Client | None = None):
         self._url = f"{base}/bot{token.strip()}/"
+        self._files = f"{base}/file/bot{token.strip()}/"
         self.c = client or httpx.Client()
 
     def __repr__(self) -> str:
@@ -154,6 +155,20 @@ class Telegram:
 
     def typing(self, chat_id: int) -> None:
         self.call("sendChatAction", chat_id=chat_id, action="typing")
+
+    def get_file(self, file_id: str) -> dict:
+        return self.call("getFile", file_id=file_id)
+
+    def download(self, file_path: str, timeout: float = 120) -> bytes:
+        """The bytes of a file Telegram holds (`file_path` from getFile). The URL carries the
+        token, so a failure keeps the exception's class only."""
+        try:
+            r = self.c.get(self._files + file_path, timeout=timeout)
+        except httpx.HTTPError as e:
+            raise TelegramError("download", 0, type(e).__name__) from None
+        if r.status_code >= 400:
+            raise TelegramError("download", r.status_code, f"HTTP {r.status_code}")
+        return r.content
 
     def get_chat_member(self, chat_id: int, user_id: int) -> dict:
         return self.call("getChatMember", chat_id=chat_id, user_id=user_id)

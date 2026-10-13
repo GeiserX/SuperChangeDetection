@@ -36,6 +36,19 @@ class LLM(Loose):
     instructions: str = ""  # extra instructions for this instance, in any language
 
 
+class Transcription(Loose):
+    """Speech to text for voice notes. With a provider, a voice note from someone allowed is always
+    answered, in the group too: it cannot mention the bot or reply by itself."""
+
+    provider: Literal["none", "openai", "plugin"] = "none"
+    base_url: str = ""  # openai: any /audio/transcriptions endpoint (OpenAI, faster-whisper-server)
+    model: str = "whisper-1"
+    api_key_env: str = "STT_API_KEY"
+    language: str | None = None  # ISO code; None lets the model detect it
+    plugin: str | None = None  # provider "plugin": a .py file under the data dir, transcribe()
+    timeout_s: int = 300
+
+
 class Interval(Loose):
     weeks: int = 0
     days: int = 0
@@ -70,6 +83,7 @@ class Settings(Loose):
     timezone: str = "UTC"
     bot: Bot = Bot()
     llm: LLM = LLM()
+    transcription: Transcription = Transcription()
     changedetection: ChangeDetection = ChangeDetection()
     fetch: Fetch = Fetch()
     snapshot_chars: int = Field(

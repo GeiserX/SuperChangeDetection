@@ -1,6 +1,7 @@
 """scd: the command line. `run` is the bot; `check` proves the settings and the changedetection
 connection; `watches` lists them as the AI sees them; `apply` runs an actions block from a file, the
-same path the chat uses, so a watch can be created or fixed without the bot."""
+same path the chat uses, so a watch can be created or fixed without the bot; `intro` posts the
+bot's introduction to the chat, the same text as /presentacion."""
 
 from __future__ import annotations
 
@@ -74,6 +75,26 @@ def cmd_apply(data: Data, args) -> int:
     return 0 if all(r.ok for r in rs) else 1
 
 
+def cmd_intro(data: Data, args) -> int:
+    from . import bot
+    from .telegram import Telegram
+
+    token = data.secret(data.settings.bot.token_env)
+    if not token:
+        sys.exit(f"{data.settings.bot.token_env} is not set")
+    chat = args.chat if args.chat is not None else data.settings.bot.chat_id
+    if chat is None:
+        sys.exit("no chat: set bot.chat_id or pass --chat")
+    b = bot.Bot(data, Telegram(token), _cd(data))
+    b.me = b.tg.get_me()
+    b.check_group()
+    sent = b.send(chat, b.intro(), plain=True)
+    if not sent:
+        return 1
+    print(f"posted to chat {chat} as @{b.handle}")
+    return 0
+
+
 def cmd_run(data: Data, args) -> int:
     from . import bot
 
@@ -101,6 +122,8 @@ def main(argv=None) -> None:
     a = sub.add_parser("apply", help="apply an actions block from a YAML file")
     a.add_argument("file")
     a.add_argument("--chat", type=int, default=None, help="the chat the watch notifies")
+    i = sub.add_parser("intro", help="post the bot's introduction to the chat (/presentacion)")
+    i.add_argument("--chat", type=int, default=None, help="where to post; default bot.chat_id")
     args = p.parse_args(argv)
     data = Data(Path(args.data))
     commands = {
@@ -109,6 +132,7 @@ def main(argv=None) -> None:
         "watches": cmd_watches,
         "rules": cmd_rules,
         "apply": cmd_apply,
+        "intro": cmd_intro,
     }
     code = commands[args.cmd](data, args)
     sys.exit(code)

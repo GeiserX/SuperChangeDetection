@@ -9,8 +9,6 @@ notification_body: |
   🔔 Something changed on «{{watch_title}}»
   {{watch_url}}
 
-  {{diff}}
-
   See the change: {{diff_url}}
 
   If this is not a real change, or something changed and I did not tell you, reply to this message and I will adjust the watch.
@@ -34,16 +32,34 @@ commands:
   lista: "The watches of this chat"
   nuevo: "Start a new conversation"
   ayuda: "What I can do"
+  presentacion: "Who I am and how to talk to me"
 description: "Tell me which page to watch and I will write here when it changes. In a group, mention me or reply to one of my messages."
 short_description: "Alerts when a web page changes"
 help: |
   Tell me what to watch, with the link, and I will set it up: for example "tell me when the price changes at https://shop.example/keyboard" or "watch for a new version at https://example.com/releases, once a day".
 
-  When the page changes I write here, with the change. If I warn you for nothing, or something changes and I stay silent, reply to that message (or mention me with @{handle}) and I will adjust it.
-
+  When the page changes I write here, with a link to the change. If I warn you for nothing, or something changes and I stay silent, reply to that message (or mention me with @{handle}) and I will adjust it.
+  {voice}{changes}
   /lista: the watches of this chat
   /nuevo: start a new conversation
+  /presentacion: who I am and how to talk to me
   /ayuda: this
+help_voice: "Voice notes work too: I always listen to them, in the group as well.\n"
+help_changes: "If you want me to work differently (a new command, another way of telling you), ask me here and I will change it myself.\n"
+intro: |
+  Hi! I am @{handle}, the page watcher of this chat.
+
+  How I work:
+  • Tell me what to watch, with the link, and I set it up: "@{handle} watch https://… and tell me if the price changes". I pick the part of the page that matters and how often to look, then show you what it sees.
+  • When it changes, I write here with a link to the change. You do not need to talk to me for that.
+  • If I warn you for nothing, or something changes and I stay silent, reply to that alert and I will adjust it.
+  • In a group I only answer when you mention me or reply to one of my messages.
+  {voice}{changes}{mentions}
+  /lista: the watches of this chat · /nuevo: start over · /ayuda: this, in short
+intro_voice: "• Voice notes: I always listen to them, in the group as well, and write down what I heard.\n"
+intro_changes: "• If you want me to work differently (a new command, another way of telling you), ask me here and I will change it myself; it goes live with my next release.\n"
+intro_mentions: "• Right now the group's mentions do not reach me: make me an admin of the group, or reply to my messages.\n"
+voice_failed: "I could not make out that voice note."
 chatid: "This chat: {id}"
 new_ok: "Starting over. The watches stay as they are."
 list_header: "Watches of this chat ({n}):"
@@ -58,6 +74,14 @@ offer_delete: "Delete {titles}? Only {who} can confirm."
 offer_only_asker: "Only {who} can answer this."
 offer_expired: "That question has expired; ask me again."
 offer_no: "OK, nothing deleted."
+offer_proposal: "{summary}\n\nShall I? Only {who} can confirm."
+offer_proposal_users: "{summary}\n\nShall I? Only the people who run me can confirm."
+offer_only_users: "Only the people who run me can answer this."
+offer_proposal_no: "OK, I will not."
+proposal_members_only: "Only the people who run me can ask for this."
+proposal_failed: "It did not work out: {error}"
+proposal_unsupported: "The AI provider cannot carry this out."
+proposal_interrupted: "I restarted while working on this and it did not finish. Ask me again if you still want it."
 followup_ok: "✅ The first check of «{title}» is done. What it sees now:\n«{seen}»"
 followup_error: "⚠️ The first check of «{title}» failed: {seen}"
 followup_late: "⏳ The first check of «{title}» has not finished after {minutes} minutes. I will tell you when it changes; if you like, ask me what it sees or ask me to change the fetch mode."

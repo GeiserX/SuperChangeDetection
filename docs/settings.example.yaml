@@ -26,6 +26,14 @@ llm:
   timeout_s: 600
   instructions: ""         # extra rules for this instance, in any language
 
+transcription:
+  provider: none           # none | openai | plugin; with one, voice notes are always answered
+  base_url: ""             # openai: any /audio/transcriptions endpoint
+  model: whisper-1
+  api_key_env: STT_API_KEY
+  language: null           # ISO code, or null to let the model detect it
+  plugin: null             # provider plugin: a .py file defining transcribe(audio, filename, settings)
+
 fetch:
   enabled: true            # give the AI the HTML of every URL in a message
   max_kb: 400
