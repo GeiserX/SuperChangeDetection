@@ -104,6 +104,7 @@ def world(tmp_path, cd, instance, monkeypatch):
     tg = Telegram(TOKEN, client=httpx.Client(transport=httpx.MockTransport(ft.handler)))
     b = Bot(data, tg, cd)
     b.start()
+    b.debounce = 0  # a test runs each turn at once
     ai = {"answers": [], "turns": []}
 
     def converse(data_, turn):
@@ -654,3 +655,345 @@ def test_openai_transcription_posts_the_audio(tmp_path, monkeypatch):
     url, form, files, headers = posted[0]
     assert url.endswith("/audio/transcriptions") and form["language"] == "es"
     assert files["file"] == ("v.oga", b"abc") and headers["Authorization"] == "Bearer k"
+
+
+# ---- one answer per burst, messages during a turn, edits
+
+
+def edit(msg, text):
+    return {**msg, "text": text, "edit_date": 1}
+
+
+def replies(ft) -> list:
+    return [(p["text"], (p.get("reply_parameters") or {}).get("message_id")) for p in ft.sent()]
+
+
+def test_a_burst_is_one_turn_and_one_plain_answer(world):
+    b, ft, ai, _ = world
+    m1, m2 = message("@watch_bot vigila https://a.example/x"), message("@watch_bot cada hora")
+    b.on_message(m1)
+    b.on_message(m2)
+    b.turn(GROUP)
+    assert len(ai["turns"]) == 1
+    assert [m["content"] for m in ai["turns"][0]["new"]] == [
+        "Ana: vigila https://a.example/x",
+        "Ana: cada hora",
+    ]
+    assert all(m["ts"] for m in ai["turns"][0]["new"])
+    assert replies(ft)[-1] == ("Vale.", None)  # several messages: no reply to one of them
+    assert not b.db.unsent(GROUP)
+    b.turn(GROUP)  # nothing left: no second answer
+    assert len(ai["turns"]) == 1
+
+
+def test_a_single_message_gets_a_reply_to_it(world):
+    b, ft, _ai, _ = world
+    m = message("@watch_bot qué vigilas")
+    turn(b, m)
+    assert replies(ft)[-1] == ("Vale.", m["message_id"])
+
+
+def test_the_turn_waits_for_the_newest_message_and_for_a_voice_note(world, monkeypatch):
+    b, *_ = world
+    clock = [100.0]
+    b.clock = lambda: clock[0]
+    slept = []
+
+    def sleep(s):
+        slept.append(s)
+        clock[0] += s
+
+    monkeypatch.setattr(botmod.time, "sleep", sleep)
+    b.debounce, b.voice_wait = 2.5, 30
+    b.arrived[GROUP] = 100.0
+    b.settle(GROUP)
+    assert clock[0] == pytest.approx(102.5)
+    b.voicing[GROUP] = [101.0]  # a note started before; still transcribing
+    b.settle(GROUP)
+    assert clock[0] == pytest.approx(131.0)  # 30 s from the note's start, no more
+    b.voicing.clear()
+    b.arrived[GROUP] = clock[0] - 10  # an old message: no wait at all
+    n = len(slept)
+    b.settle(GROUP)
+    assert len(slept) == n
+
+
+def test_a_message_during_the_turn_joins_it_and_the_answer_covers_both(world, monkeypatch):
+    b, ft, ai, _ = world
+    m1, m2 = message("@watch_bot vigila https://a.example/x"), message("@watch_bot y cada hora")
+    handed = []
+
+    def converse(data_, t):
+        ai["turns"].append(t)
+        b.on_message(m2)  # arrives while the answer is being written
+        got = t["incoming"]()
+        handed.extend(got)
+        assert t["incoming"]() == []  # handed over once
+        return Reply("Hecho, cada hora.", conversation="c1", covers={g["id"] for g in got})
+
+    monkeypatch.setattr(llm, "converse", converse)
+    b.on_message(m1)
+    b.turn(GROUP)
+    assert [h["content"] for h in handed] == ["Ana: y cada hora"] and handed[0]["ts"]
+    assert len(ai["turns"]) == 1 and replies(ft)[-1] == ("Hecho, cada hora.", None)
+    assert not b.db.unsent(GROUP)
+    logged = [r["text"] for r in b.db.chat_rows(GROUP, 10)]
+    assert logged == ["Ana: vigila https://a.example/x", "Ana: y cada hora", "Hecho, cada hora."]
+    assert t_incoming_after_close(b, ai) == []
+
+
+def t_incoming_after_close(b, ai):
+    b.on_message(message("@watch_bot otra"))
+    return ai["turns"][-1]["incoming"]()  # the turn is over: a late call takes nothing
+
+
+def test_a_message_the_answer_did_not_cover_goes_with_the_next_turn(world, monkeypatch):
+    b, ft, ai, _ = world
+    m2 = message("@watch_bot y otra cosa")
+    script = []
+
+    def converse(data_, t):
+        ai["turns"].append(t)
+        if not script:
+            script.append(1)
+            b.on_message(m2)
+            t["incoming"]()
+            return Reply("Primera.", conversation="c1")  # covers nothing it was handed
+        return Reply("Segunda.", conversation="c1")
+
+    monkeypatch.setattr(llm, "converse", converse)
+    m1 = message("@watch_bot hola")
+    turn(b, m1)
+    assert replies(ft)[-1] == ("Primera.", m1["message_id"])
+    assert [r["text"] for r in b.db.unsent(GROUP)] == ["y otra cosa"]
+    b.turn(GROUP)
+    assert ai["turns"][-1]["new"][-1]["content"] == "Ana: y otra cosa"
+    assert replies(ft)[-1] == ("Segunda.", m2["message_id"]) and not b.db.unsent(GROUP)
+
+
+def test_a_turn_the_provider_did_not_keep_sends_its_handed_lines_again(world, monkeypatch):
+    b, _ft, ai, _ = world
+    m2 = message("@watch_bot segunda")
+
+    def converse(data_, t):
+        ai["turns"].append(t)
+        b.on_message(m2)
+        got = t["incoming"]()
+        return Reply("x", conversation=None, kept=False, covers={g["id"] for g in got})
+
+    monkeypatch.setattr(llm, "converse", converse)
+    turn(b, message("@watch_bot primera"))
+    assert [r["text"] for r in b.db.unsent(GROUP)] == ["primera", "segunda"]
+
+
+def test_an_edit_of_a_waiting_message_sends_the_new_text(world):
+    b, _ft, ai, _ = world
+    m = message("@watch_bot vigila https://a.example/x")
+    b.on_message(m)
+    b.on_edit(edit(m, "@watch_bot vigila https://a.example/y"))
+    b.turn(GROUP)
+    assert [x["content"] for x in ai["turns"][0]["new"]] == ["Ana: vigila https://a.example/y"]
+    assert b.db.find_chat(GROUP, m["message_id"])["body"] == "vigila https://a.example/y"
+
+
+def test_an_edit_during_the_turn_reaches_it_as_a_correction(world, monkeypatch):
+    b, ft, ai, _ = world
+    m = message("@watch_bot vigila https://a.example/x cada día")
+    handed = []
+
+    def converse(data_, t):
+        ai["turns"].append(t)
+        b.on_edit(edit(m, "@watch_bot vigila https://a.example/x cada hora"))
+        got = t["incoming"]()
+        handed.extend(got)
+        return Reply("Cada hora, entonces.", conversation="c1", covers={g["id"] for g in got})
+
+    monkeypatch.setattr(llm, "converse", converse)
+    turn(b, m)
+    assert handed[0]["content"] == (
+        "[Ana edited a message of this turn. Reconsider your answer with the new wording.]\n"
+        "Before: vigila https://a.example/x cada día\nNow: vigila https://a.example/x cada hora"
+    )
+    assert replies(ft)[-1] == ("Cada hora, entonces.", m["message_id"])  # one message answered
+    assert len(ai["turns"]) == 1 and not b.db.unsent(GROUP)
+    row = b.db.find_chat(GROUP, m["message_id"])  # the log keeps the final wording
+    assert row["body"] == "vigila https://a.example/x cada hora"
+
+
+def test_an_edit_of_an_answered_message_is_a_new_turn_with_the_diff(world):
+    b, ft, ai, _ = world
+    ai["answers"] = [Reply("Vigilo el precio.", conversation="c1")]
+    m = message("@watch_bot vigila el precio")
+    turn(b, m)
+    b.on_edit(edit(m, "@watch_bot vigila el stock"))
+    b.turn(GROUP)
+    assert ai["turns"][-1]["new"][-1]["content"] == (
+        "[Ana edited a message you already answered. Check whether your answer still holds with "
+        "the new wording, and say what changes.]\nBefore: vigila el precio\nNow: vigila el stock\n"
+        "Your answer was: Vigilo el precio."
+    )
+    assert replies(ft)[-1] == ("Vale.", m["message_id"])
+    assert b.db.find_chat(GROUP, m["message_id"])["text"] == "Ana: vigila el stock"
+
+
+def test_edits_that_change_nothing_run_commands_or_answer_offers_do_nothing(world):
+    b, ft, ai, _ = world
+    m = message("@watch_bot vigila el precio")
+    turn(b, m)
+    n_turns, n_sent = len(ai["turns"]), len(ft.sent())
+    b.on_edit(edit(m, "@watch_bot   vigila el  precio"))  # spacing only
+    b.on_edit(edit(m, "/lista"))
+    b.db.set_kv(
+        f"offer:{GROUP}",
+        {"id": "o1", "kind": "delete", "asker": ANA, "by": [ANA], "items": [], "expires": 2**40},
+    )
+    b.on_edit(edit(message("@watch_bot sí", chat=ANA, user=ANA), "sí"))
+    assert b.db.get_kv(f"offer:{GROUP}")  # an edit is never a yes
+    assert not [r for r in b.db.unsent(GROUP)] and len(ft.sent()) == n_sent
+    assert len(ai["turns"]) == n_turns
+
+
+def test_an_edit_that_adds_the_mention_is_answered(world):
+    b, ft, ai, _ = world
+    m = message("vigila https://a.example/x")  # not for the bot, and history_scope is "asked"
+    b.on_message(m)
+    assert not b.db.unsent(GROUP)
+    b.on_edit(edit(m, "vigila https://a.example/x por favor"))  # still not for the bot
+    assert not b.db.unsent(GROUP)
+    b.on_edit(edit(m, "@watch_bot vigila https://a.example/x"))
+    b.turn(GROUP)
+    assert ai["turns"][-1]["new"][-1]["content"] == "Ana: vigila https://a.example/x"
+    assert replies(ft)[-1] == ("Vale.", m["message_id"])
+
+
+def test_with_history_scope_all_the_group_is_context_and_its_edits_count(world):
+    b, ft, ai, _ = world
+    b.s.bot.history_scope = "all"
+    seen = message("mañana miro lo de las entradas", user=LUIS, name="Luis")
+    b.on_message(seen)
+    b.turn(GROUP)
+    assert ai["turns"] == []  # nobody called the bot: no turn
+    b.on_edit(edit(seen, "pasado mañana miro lo de las entradas"))
+    m = message("@watch_bot vigila https://a.example/x")
+    b.on_message(m)
+    b.turn(GROUP)
+    assert [x["content"] for x in ai["turns"][0]["new"]] == [
+        "chat: Luis: pasado mañana miro lo de las entradas",
+        "Ana: vigila https://a.example/x",
+    ]
+    assert replies(ft)[-1] == ("Vale.", m["message_id"])  # only one message called the bot
+    b.on_edit(edit(seen, "pasado mañana miro lo de las entradas, ya"))  # seen, still unaddressed
+    assert b.db.find_chat(GROUP, seen["message_id"])["body"].endswith(", ya") and not b.db.unsent(
+        GROUP
+    )
+    hist = b.db.history(GROUP, 10)
+    assert hist[0]["content"] == "chat: Luis: pasado mañana miro lo de las entradas, ya"
+    b.on_edit(edit(seen, "@watch_bot pasado mañana miro lo de las entradas, ya"))
+    b.turn(GROUP)
+    assert ai["turns"][-1]["new"][-1]["content"] == (
+        "Luis: pasado mañana miro lo de las entradas, ya"
+    )
+    assert replies(ft)[-1] == ("Vale.", seen["message_id"])
+
+
+def test_a_voice_note_holds_the_turn_until_heard_and_keeps_its_caption(world, monkeypatch):
+    b, ft, ai, _ = world
+    b.s.transcription.provider = "plugin"
+    monkeypatch.setattr(llm, "transcribe", lambda *_: "vigila las entradas")
+    later = []
+    monkeypatch.setattr(b, "later", lambda fn, *args: later.append((fn, args)))
+    note = voice_note()
+    note["caption"] = "@watch_bot mira esto"
+    b.on_message(note)
+    assert len(b.voicing[GROUP]) == 1  # being transcribed: the chat's next turn waits for it
+    fn, args = later.pop()
+    fn(*args)
+    assert GROUP not in b.voicing and ft.texts()[-1] == "🎤 vigila las entradas"
+    b.turn(GROUP)
+    assert ai["turns"][-1]["new"][-1]["content"] == "Ana: vigila las entradas\nmira esto"
+    audio = message("", chat=ANA, user=ANA)
+    del audio["text"]
+    audio["audio"] = {"file_id": "f2", "duration": 9}
+    b.on_message(audio)  # an audio file in a private chat is heard too
+    fn, args = later.pop()
+    fn(*args)
+    assert [r["text"] for r in b.db.unsent(ANA)] == ["vigila las entradas"] and not b.voicing
+    b.on_edit({**note, "caption": "@watch_bot mira esto otro", "edit_date": 1})
+    assert [r["text"] for r in b.db.unsent(ANA)] == ["vigila las entradas"]  # the transcript stays
+    assert not b.db.unsent(GROUP)  # and a caption edit of the answered note starts no new turn
+
+
+def test_the_bot_asks_telegram_for_edits(world):
+    b, ft, _ai, _ = world
+    b.poll_once()
+    assert "edited_message" in ft.sent("getUpdates")[-1]["allowed_updates"]
+
+
+def test_an_old_database_gains_the_new_columns(tmp_path):
+    import sqlite3
+
+    from superchangedetection.db import DB
+
+    path = tmp_path / "bot.sqlite"
+    c = sqlite3.connect(path)
+    c.execute(
+        "CREATE TABLE chat (id INTEGER PRIMARY KEY AUTOINCREMENT, chat INTEGER NOT NULL, "
+        "ts TEXT NOT NULL, role TEXT NOT NULL, who TEXT, text TEXT NOT NULL)"
+    )
+    c.execute(
+        "INSERT INTO chat (chat, ts, role, who, text) VALUES (1, '2026-01-01', 'user', 'A', 'x')"
+    )
+    c.commit()
+    c.close()
+    db = DB(path)
+    assert db.history(1, 5) == [{"role": "user", "content": "x", "ts": "2026-01-01"}]
+    db.add_chat(1, "user", "A", "A: y", mid=7, asked=True, body="y")
+    assert db.find_chat(1, 7)["body"] == "y"
+
+
+def test_history_days_brings_every_message_of_those_days(tmp_path):
+    from superchangedetection.db import DB
+
+    db = DB(tmp_path / "bot.sqlite")
+    for n in range(6):
+        db.add_chat(1, "user", "A", f"A: {n}")
+    assert [h["content"] for h in db.history(1, 2)] == ["A: 4", "A: 5"]
+    assert len(db.history(1, 2, days=14)) == 6
+
+
+def test_on_the_real_worker_a_burst_and_a_late_message_get_one_answer(world, monkeypatch):
+    import threading
+    import time
+
+    b, ft, ai, _ = world
+    b.__dict__.pop("worker")  # the real per-chat thread, not the tests' inline turns
+    b.debounce = 0.3
+    started, late_sent = threading.Event(), threading.Event()
+
+    def converse(data_, t):
+        ai["turns"].append(t)
+        started.set()
+        assert late_sent.wait(5)
+        got = []
+        for _ in range(50):  # the plugin looks for new lines while it works
+            got += t["incoming"]()
+            if got:
+                break
+            time.sleep(0.05)
+        return Reply("Todo hecho.", conversation="c1", covers={g["id"] for g in got})
+
+    monkeypatch.setattr(llm, "converse", converse)
+    b.on_message(message("@watch_bot uno"))
+    time.sleep(0.1)
+    b.on_message(message("@watch_bot dos"))  # inside the debounce: same turn
+    assert started.wait(5)
+    b.on_message(message("@watch_bot tres"))  # while the answer is written: joins it
+    late_sent.set()
+    for _ in range(100):
+        if "Todo hecho." in ft.texts() and not b.db.unsent(GROUP):
+            break
+        time.sleep(0.05)
+    time.sleep(0.5)  # a second turn, if any, would have started by now
+    assert len(ai["turns"]) == 1
+    assert [m["content"] for m in ai["turns"][0]["new"]] == ["Ana: uno", "Ana: dos"]
+    assert ft.texts().count("Todo hecho.") == 1 and not b.db.unsent(GROUP)

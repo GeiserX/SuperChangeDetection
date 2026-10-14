@@ -53,9 +53,26 @@
 
 Each chat is one conversation. A plugin provider keeps it on its side and gets only the new lines each
 turn, plus a recap of the recent ones (`bot.history` lines) for when it has to start over; the openai
-and anthropic providers get the recap every time. `/nuevo` starts over. Lines that arrive while a turn
-runs are stored in SQLite under the data directory and go with the next turn; a turn the provider did not
-keep (`kept: false`) sends them again.
+and anthropic providers get the recap every time (with `bot.history_days`, every line of those days too).
+`/nuevo` starts over. Lines wait in SQLite under the data directory until a turn the provider kept has
+taken them, so a restart loses none; a turn the provider did not keep (`kept: false`) sends them again.
+
+One answer per burst. A chat's turn starts 2.5 seconds after its newest message, and waits up to 30
+seconds for a voice note of that chat still being transcribed, so messages sent together go as one turn.
+A message that calls the bot while a turn runs is handed to that turn (`turn["incoming"]`, for a plugin
+provider); the answer names the ones it took in, and only the rest make the next turn. One turn runs at a
+time per chat. An answer to one message replies to it; an answer to several is sent plainly.
+
+Edits count. Telegram sends the bot edited messages, and each is handled by where the message is: still
+waiting, its new text goes; in the running turn, a correction with the old and the new wording joins
+it; already answered, the correction and the answer it got start a new turn; a group message that did
+not call the bot and now mentions it is answered. An edit that changes only spacing does nothing, one
+that starts with `/` never runs a command, and an edit is never a yes or a no. The log keeps the final
+wording.
+
+With `bot.history_scope: all`, the group's messages that do not call the bot are kept too and go to the
+AI with its next turn, marked `chat:`, as context it does not answer. In a group, Telegram shows a bot
+those messages and their edits only when it is an admin of the group (or privacy mode is off).
 
 ## Notifications
 
@@ -71,9 +88,10 @@ are its own and which chat each one belongs to.
 
 ## Voice notes
 
-With a `transcription` provider, a voice note from someone allowed is always handled, in the group too,
-since a note cannot mention the bot or reply by itself: the audio is fetched from Telegram, transcribed,
-echoed as a reply (`🎤 …`) so everyone sees what was heard, and then treated as typed text. A note that
+With a `transcription` provider, a voice note or audio file from someone allowed is always handled, in
+the group too, since a note cannot mention the bot or reply by itself: the audio is fetched from
+Telegram, transcribed, echoed as a reply (`🎤 …`) so everyone sees what was heard, and then treated as
+typed text, followed by its caption if it has one. A note that
 could not be transcribed gets a short reply saying so.
 
 ## Proposals

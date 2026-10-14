@@ -6,15 +6,28 @@ the answer.
   notification comes from changedetection as the bot, so replying to one counts, and its last line
   `ref <uuid>` ties the reply to the watch.
 - Each chat is one conversation for the AI (a plugin keeps it on its side; the other providers get
-  the recent lines each time). Messages that arrive while a turn runs are queued in SQLite and go
-  with the next turn, so a restart loses nothing.
+  the recent lines each time). Lines wait in SQLite until the AI has taken them, so a restart
+  loses nothing.
+- One answer per burst: a chat's turn starts DEBOUNCE_S after its newest message (and waits up to
+  VOICE_WAIT_S for a voice note of the chat still being transcribed), so messages sent together go
+  as one turn. What calls the bot while a turn runs is handed to it (turn["incoming"]); the lines
+  its answer took in are named in `covers`, the rest make the next turn. An answer that covers one
+  message replies to it; one that covers several is sent plainly.
+- Edits (edited_message) are handled by where the message is: still waiting, its new text goes; in
+  the running turn, a correction with the old and the new wording joins it; already answered, the
+  correction starts a new turn with the answer it got; a group message that did not call the bot and
+  now mentions it is answered. An edit is never a command and never a yes or a no.
+- With bot.history_scope "all", the group messages that do not call the bot go to the AI too, as
+  context marked `chat:`, with the next turn. Telegram shows a bot those (and their edits) only when
+  it is a group admin or privacy mode is off.
 - The AI's answer is shown as it is; its actions block is validated, creates, updates and rechecks
   run at once and the chat gets what each watch sees now; a delete is offered with two buttons and
   runs only after the person who asked says yes, within the hour.
 - A create or update whose first check had not finished is followed up: the bot looks again every
   half minute and posts what the watch sees once the check ran.
-- A voice note from someone allowed is always answered, in the group too (it cannot mention the
-  bot or reply by itself): the transcript is echoed as a reply, then handled as typed text.
+- A voice note or audio file from someone allowed is always answered, in the group too (it cannot
+  mention the bot or reply by itself), caption or not: the transcript is echoed as a reply, then
+  handled as typed text.
 - A proposal from the provider (something it would do outside the chat, such as changing the
   bot's own code) is shown; `confirm_by` none runs at once in the background, the others wait for
   a yes from the asker or from one of `bot.users`. Only `bot.users` may ask for one.
@@ -34,6 +47,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
 from . import actions, context, llm, render
@@ -52,6 +66,11 @@ OFFER_TTL_S = 3600  # a delete offer answers only within the hour
 FOLLOWUP_EVERY_S = 30
 FOLLOWUP_GIVE_UP_S = 30 * 60
 TYPING_S = 4
+# a chat's turn starts this long after its newest message, so a burst goes together
+DEBOUNCE_S = 2.5
+VOICE_WAIT_S = 30  # a turn waits this long at most for a voice note of its chat still transcribing
+SETTLE_STEP_S = 0.5
+ANSWER_CLIP = 1500  # characters of an earlier answer quoted back with an edit of its message
 REF = re.compile(r"(?m)^ref ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$")
 COMMAND = re.compile(r"^/([A-Za-z0-9_]+)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$", re.DOTALL)
 COMMANDS = {
@@ -80,6 +99,38 @@ def _word(text: str) -> str:
 
 def _now() -> int:
     return int(time.time())
+
+
+@dataclass
+class Turn:
+    """The turn a chat is running: the queued lines it started with and those handed to it since."""
+
+    chat: int
+    ids: set[int]
+    pulled: list[int] = field(default_factory=list)
+    closed: bool = False
+
+    def taken(self) -> set[int]:
+        return self.ids | set(self.pulled)
+
+
+def _asked(row: dict) -> bool:
+    return row.get("asked", True) is not False
+
+
+def _reply_to(rows: list[dict]) -> int | None:
+    """An answer replies to the message it answers only when it answers exactly one (an edit's
+    correction is about the message it edits, so it counts as that one)."""
+    mids = {r.get("msg") for r in rows if _asked(r)}
+    return mids.pop() if len(mids) == 1 else None
+
+
+def _iso(ts) -> str:
+    return dt.datetime.fromtimestamp(int(ts or 0), dt.UTC).isoformat(timespec="seconds")
+
+
+def _same(a: str, b: str) -> bool:
+    return " ".join((a or "").split()) == " ".join((b or "").split())
 
 
 class Worker:
@@ -120,6 +171,12 @@ class Bot:
         self.mentions_ok = True  # the group's @mentions reach the bot (admin, or privacy off)
         self.workers: dict[int, Worker] = {}
         self._lock = threading.Lock()
+        self.debounce, self.voice_wait, self.clock = DEBOUNCE_S, VOICE_WAIT_S, time.monotonic
+        # what the turn loop, incoming() and an edit look at together: guarded by qlock
+        self.qlock = threading.Lock()
+        self.arrived: dict[int, float] = {}  # chat -> when its newest line that calls the bot came
+        self.voicing: dict[int, list[float]] = {}  # chat -> start of each note being transcribed
+        self.running: dict[int, Turn] = {}
 
     # ---- start and run
 
@@ -159,7 +216,8 @@ class Bot:
             self.mentions_ok = False
             log.warning(
                 "privacy mode is on and the bot is not an admin of the group: it sees "
-                "commands and replies, not @mentions (make it an admin, or /setprivacy)"
+                "commands and replies, not @mentions, other messages or their edits (make it "
+                "an admin, or /setprivacy)"
             )
 
     def sync_notifications(self) -> None:
@@ -257,6 +315,8 @@ class Bot:
     def handle_update(self, u: dict) -> None:
         if "message" in u:
             self.on_message(u["message"])
+        elif "edited_message" in u:
+            self.on_edit(u["edited_message"])
         elif "callback_query" in u:
             self.on_callback(u["callback_query"])
 
@@ -268,9 +328,11 @@ class Bot:
             return
         text = msg.get("text") or msg.get("caption") or ""
         voice = msg.get("voice") or msg.get("audio")
-        if voice and not text:
-            if self.allowed(chat, user) and self.s.transcription.provider != "none":
-                self.later(self.voice, msg)
+        if voice and self.allowed(chat, user) and self.s.transcription.provider != "none":
+            start = self.clock()  # from now the chat's next turn waits for this note
+            with self.qlock:
+                self.voicing.setdefault(int(chat["id"]), []).append(start)
+            self.later(self.voice, msg, start)
             return
         if not text or not self.allowed(chat, user):
             return
@@ -286,47 +348,76 @@ class Bot:
             return
         content = self.addressed(msg, text, private)
         if content is None:
+            if not private and self.s.bot.history_scope == "all":
+                self.enqueue(chat_id, msg, text.strip(), asked=False)
             return
         self.enqueue(chat_id, msg, content)
 
-    def enqueue(self, chat_id: int, msg: dict, content: str) -> None:
-        """A line for the AI, tied to the watch when the message replies to a notification."""
+    def enqueue(
+        self, chat_id: int, msg: dict, content: str, asked: bool = True, edit: bool = False
+    ) -> None:
+        """A line for the AI, tied to the watch when the message replies to a notification. A line
+        that does not call the bot (asked False) waits for the next turn as context; edit True is
+        the app's correction about msg, never msg itself."""
         user = msg.get("from") or {}
         ref = None
         if self.from_me(msg.get("reply_to_message")):
             found = REF.search(msg["reply_to_message"].get("text") or "")
             ref = found.group(1) if found else None
-        self.db.push_unsent(
-            chat_id,
-            {
-                "who": self.who(user),
-                "user": user.get("id"),
-                "text": content,
-                "ref": ref,
-                "msg": msg.get("message_id"),
-                "ts": _now(),
-            },
-        )
-        self.worker(chat_id).kick()
+        row = {
+            "who": self.who(user),
+            "user": user.get("id"),
+            "text": content,
+            "ref": ref,
+            "msg": msg.get("message_id"),
+            "ts": _now(),
+            "asked": asked,
+        }
+        if edit:
+            row["edit"] = True
+        self.db.push_unsent(chat_id, row)
+        if asked:
+            with self.qlock:
+                self.arrived[chat_id] = self.clock()
+            self.worker(chat_id).kick()
 
-    def voice(self, msg: dict) -> None:
-        """A voice note: fetched from Telegram, transcribed, echoed as a reply so everyone sees what
-        was heard, then handled as typed text. A failure tells the chat."""
+    def voice(self, msg: dict, start: float | None = None) -> None:
+        """A voice note or audio file: fetched from Telegram, transcribed, echoed as a reply so
+        everyone sees what was heard, then handled as typed text with its caption, if any. A failure
+        tells the chat. Until it is done the chat's next turn waits for it (VOICE_WAIT_S at most)."""
         chat_id = int((msg.get("chat") or {})["id"])
         voice = msg.get("voice") or msg.get("audio") or {}
         try:
-            f = self.tg.get_file(voice.get("file_id"))
-            path = str(f.get("file_path") or "")
-            name = path.rsplit("/", 1)[-1] or "voice.ogg"
-            text = llm.transcribe(self.data, self.tg.download(path), name)
-        except Exception as e:  # noqa: BLE001 - the provider's text may quote anything
-            log.warning("transcription failed for chat %s: %s", chat_id, safe(e))
-            text = ""
-        if not text:
-            self.send(chat_id, self.t("voice_failed"), reply_to=msg.get("message_id"), plain=True)
-            return
-        self.send(chat_id, f"🎤 {text}", reply_to=msg.get("message_id"), plain=True)
-        self.enqueue(chat_id, msg, text)
+            try:
+                f = self.tg.get_file(voice.get("file_id"))
+                path = str(f.get("file_path") or "")
+                name = path.rsplit("/", 1)[-1] or "voice.ogg"
+                text = llm.transcribe(self.data, self.tg.download(path), name)
+            except Exception as e:  # noqa: BLE001 - the provider's text may quote anything
+                log.warning("transcription failed for chat %s: %s", chat_id, safe(e))
+                text = ""
+            if not text:
+                self.send(
+                    chat_id, self.t("voice_failed"), reply_to=msg.get("message_id"), plain=True
+                )
+                return
+            self.send(chat_id, f"🎤 {text}", reply_to=msg.get("message_id"), plain=True)
+            caption = self.clean(msg.get("caption") or "")
+            self.enqueue(chat_id, msg, f"{text}\n{caption}" if caption else text)
+        finally:
+            with self.qlock:
+                notes = self.voicing.get(chat_id, [])
+                if start in notes:
+                    notes.remove(start)
+                if not notes:
+                    self.voicing.pop(chat_id, None)
+
+    def clean(self, text: str) -> str:
+        """A message's words without the bot's @handle."""
+        if self.handle:
+            pattern = re.compile(rf"(?<![\w@])@{re.escape(self.handle)}(?!\w)", re.IGNORECASE)
+            text = pattern.sub("", text)
+        return re.sub(r"[ \t]{2,}", " ", text).strip()
 
     def addressed(self, msg: dict, text: str, private: bool) -> str | None:
         """The text without the bot's @handle when the bot should answer it, else None."""
@@ -421,56 +512,137 @@ class Bot:
 
     # ---- one turn
 
+    def settle(self, chat: int) -> None:
+        """Wait until the chat's newest line that calls the bot is DEBOUNCE_S old and no voice note
+        of the chat is still being transcribed (VOICE_WAIT_S at most from the note's start)."""
+        while True:
+            with self.qlock:
+                newest = self.arrived.get(chat)
+                notes = list(self.voicing.get(chat) or [])
+            now = self.clock()
+            wait = newest + self.debounce - now if newest is not None else 0
+            if notes:
+                wait = max(wait, min(notes) + self.voice_wait - now)
+            if wait <= 0:
+                return
+            time.sleep(min(wait, SETTLE_STEP_S))
+
     def turn(self, chat: int) -> None:
-        rows = self.db.unsent(chat)
-        if not rows:
-            return
-        try:
-            listing = context.listing(self.cd, self.token)
-            facts = context.facts(self.cd, self.token, self.s, self.t, chat, listing)
-            files = context.files(self.cd, self.token, self.s, [r["text"] for r in rows], listing)
-        except CDError as e:
-            log.warning("instance unreachable for chat %s: %s", chat, safe(e))
-            self.send(chat, self.t("instance_down"), reply_to=rows[-1].get("msg"), plain=True)
-            return
-        new = []
-        note = self.db.get_kv(f"app:{chat}")
-        if note:
-            new.append({"role": "app", "content": note})
-        lines = [self.line(r, listing) for r in rows]
-        new += [{"role": "user", "content": line} for line in lines]
-        conv = self.db.get_kv(f"conversation:{chat}")
-        turn = {
-            "conversation": conv,
-            "rules": context.rules(self.s, self.t),
-            "context": facts,
-            "files": files,
-            "new": new,
-            "history": self.db.history(chat, self.s.bot.history),
-        }
+        """One answer for every queued line of the chat. Lines that call the bot while it runs are
+        handed to the provider (turn["incoming"]); those its answer does not cover stay queued for
+        the next turn."""
+        self.settle(chat)
+        with self.qlock:
+            rows = self.db.unsent(chat)
+            if not any(_asked(r) for r in rows):
+                return
+            state = Turn(chat, {r["_id"] for r in rows})
+            self.running[chat] = state
+        reply = None
         stop = threading.Event()
-        threading.Thread(target=self._typing, args=(chat, stop), daemon=True).start()
         try:
-            reply = llm.converse(self.data, turn)
-        except Exception as e:  # noqa: BLE001 - the provider's text may quote anything
-            log.warning("ai failed for chat %s: %s", chat, safe(e))
-            self.send(chat, self.t("ai_down"), reply_to=rows[-1].get("msg"), plain=True)
-            return
+            try:
+                listing = context.listing(self.cd, self.token)
+                facts = context.facts(self.cd, self.token, self.s, self.t, chat, listing)
+                asked = [r["text"] for r in rows if _asked(r)]  # pages someone asked about
+                files = context.files(self.cd, self.token, self.s, asked, listing)
+            except CDError as e:
+                log.warning("instance unreachable for chat %s: %s", chat, safe(e))
+                self.send(chat, self.t("instance_down"), reply_to=_reply_to(rows), plain=True)
+                return
+            new = []
+            note = self.db.get_kv(f"app:{chat}")
+            if note:
+                new.append({"role": "app", "content": note, "ts": _iso(_now())})
+            new += [
+                {"role": "user", "content": self.line(r, listing), "ts": _iso(r.get("ts"))}
+                for r in rows
+            ]
+            turn = {
+                "conversation": self.db.get_kv(f"conversation:{chat}"),
+                "rules": context.rules(self.s, self.t),
+                "context": facts,
+                "files": files,
+                "new": new,
+                "history": self.db.history(chat, self.s.bot.history, self.s.bot.history_days),
+                "incoming": self._incoming(state, listing),
+            }
+            threading.Thread(target=self._typing, args=(chat, stop), daemon=True).start()
+            try:
+                reply = llm.converse(self.data, turn)
+            except Exception as e:  # noqa: BLE001 - the provider's text may quote anything
+                log.warning("ai failed for chat %s: %s", chat, safe(e))
+                self.send(chat, self.t("ai_down"), reply_to=_reply_to(rows), plain=True)
+                return
         finally:
             stop.set()
+            with self.qlock:
+                state.closed = True  # a provider thread that outlives the turn takes nothing more
+                self.running.pop(chat, None)
+        took = state.ids | (set(state.pulled) & reply.covers)
+        # read again: an edit during the turn changed a line's text, and the log keeps the last one
+        covered = [r for r in self.db.unsent(chat) if r["_id"] in took]
         self.db.set_kv(f"conversation:{chat}", reply.conversation)
         if reply.kept:
-            self.db.drop_unsent(chat, rows)
+            self.db.drop_unsent(chat, covered)
             self.db.set_kv(f"app:{chat}", None)
-            for r, line in zip(rows, lines, strict=True):
-                self.db.add_chat(chat, "user", r.get("who"), line)
+            for r in covered:
+                self.db.add_chat(
+                    chat,
+                    "user",
+                    r.get("who"),
+                    self.line(r, listing, mark=False),
+                    mid=None if r.get("edit") else r.get("msg"),
+                    asked=_asked(r),
+                    body=r.get("text"),
+                )
             if note:
                 self.db.add_chat(chat, "app", None, note)
-        log.info("turn for chat %s: %d lines, kept=%s", chat, len(rows), reply.kept)
-        self.answer(chat, reply, rows[-1], listing)
+        log.info(
+            "turn for chat %s: %d lines, %d handed over, %d of them covered, kept=%s",
+            chat,
+            len(rows),
+            len(state.pulled),
+            len(took) - len(state.ids),
+            reply.kept,
+        )
+        asked = [r for r in covered if _asked(r)] or [r for r in rows if _asked(r)]
+        self.answer(chat, reply, asked[-1], listing, _reply_to(asked))
 
-    def line(self, row: dict, listing: list) -> str:
+    def _incoming(self, state: Turn, listing: list):
+        """turn["incoming"]: the chat's lines that called the bot since the last call, for the
+        provider's thread. Once the turn is over it hands over nothing, so a late call steals
+        nothing from the next turn."""
+
+        def incoming() -> list[dict]:
+            with self.qlock:
+                if state.closed:
+                    return []
+                got = [
+                    r
+                    for r in self.db.unsent(state.chat)
+                    if r["_id"] not in state.taken() and _asked(r)
+                ]
+                state.pulled.extend(r["_id"] for r in got)
+            return [
+                {
+                    "id": r["_id"],
+                    "role": "user",
+                    "content": self.line(r, listing),
+                    "ts": _iso(r.get("ts")),
+                }
+                for r in got
+            ]
+
+        return incoming
+
+    def line(self, row: dict, listing: list, mark: bool = True) -> str:
+        """The line as the AI reads it; a line that did not call the bot starts with `chat:`
+        (mark False leaves that out: the log adds it when it is read, db.history)."""
+        if row.get("edit"):  # the app's own note about an edit names who edited it
+            return row["text"]
         who = row.get("who") or "someone"
+        seen = "" if _asked(row) or not mark else "chat: "
         if row.get("ref"):
             n = next((n for n, u, _ in listing if u == row["ref"]), None)
             where = (
@@ -478,11 +650,105 @@ class Bot:
                 if n
                 else f"replying to the notification of a watch that no longer exists ({row['ref']})"
             )
-            return f"{who} ({where}): {row['text']}"
-        return f"{who}: {row['text']}"
+            return f"{seen}{who} ({where}): {row['text']}"
+        return f"{seen}{who}: {row['text']}"
 
-    def answer(self, chat: int, reply: llm.Reply, last: dict, listing: list) -> None:
-        text, reply_to = reply.text, last.get("msg")
+    # ---- edits
+
+    def on_edit(self, msg: dict) -> None:
+        """An edited message, handled by where it is (see the module's docstring). It never runs a
+        command and is never a yes or a no."""
+        chat, user = msg.get("chat") or {}, msg.get("from") or {}
+        text = (msg.get("text") or msg.get("caption") or "").strip()
+        if not text or text.startswith("/") or not self.allowed(chat, user):
+            return
+        if (msg.get("voice") or msg.get("audio")) and self.s.transcription.provider != "none":
+            return  # a caption edit of a transcribed note: the transcript is what was said
+        chat_id, mid = int(chat["id"]), msg.get("message_id")
+        private = chat.get("type") == "private"
+        content = self.addressed(msg, text, private)
+        calls = content is not None
+        now = content if calls else self.clean(text)
+        name = self.who(user)
+        with self.qlock:
+            state = self.running.get(chat_id)
+            taken = state.taken() if state else set()
+            queued = next(
+                (
+                    r
+                    for r in reversed(self.db.unsent(chat_id))
+                    if r.get("msg") == mid and not r.get("edit")
+                ),
+                None,
+            )
+            if queued is not None and queued["_id"] not in taken:
+                # still waiting: the new text goes, and the debounce starts over
+                if _same(queued["text"], now) and (_asked(queued) or not calls):
+                    return
+                queued.update(text=now, asked=_asked(queued) or calls, ts=_now())
+                self.db.update_unsent(queued)
+                if not queued["asked"]:
+                    return
+                self.arrived[chat_id] = self.clock()
+        if queued is not None and queued["_id"] not in taken:
+            self.worker(chat_id).kick()
+            return
+        if queued is not None:  # a line of the running turn
+            before = queued["text"]
+            if _same(before, now) and (_asked(queued) or not calls):
+                return
+            self.db.update_unsent({**queued, "text": now})
+            if not _asked(queued):
+                if calls:  # it rode along as context and now calls the bot: a new message
+                    self.enqueue(chat_id, msg, now)
+                return
+            self.enqueue(
+                chat_id,
+                msg,
+                f"[{name} edited a message of this turn. Reconsider your answer with the new "
+                f"wording.]\nBefore: {before}\nNow: {now}",
+                edit=True,
+            )
+            return
+        row = self.db.find_chat(chat_id, mid) if mid is not None else None
+        if row is None:  # never seen: a new message if it now calls the bot
+            if calls:
+                self.enqueue(chat_id, msg, now)
+            return
+        before = row.get("body") or ""
+        logged = (
+            row["text"].replace(before, now)
+            if before and before in row["text"]
+            else f"{row.get('who') or name}: {now}"
+        )
+        if row.get("asked") == 0:  # a message the bot only saw
+            if not calls:
+                if not _same(before, now):
+                    self.db.edit_chat(row["id"], logged, now)
+                return
+            # the edit adds the mention: a new message to answer, logged again when answered
+            self.db.delete_chat(row["id"])
+            self.enqueue(chat_id, msg, now)
+            return
+        if _same(before, now):
+            return
+        self.db.edit_chat(row["id"], logged, now)
+        said = (self.db.answer_after(chat_id, row["id"]) or "")[:ANSWER_CLIP]
+        self.enqueue(
+            chat_id,
+            msg,
+            f"[{name} edited a message you already answered. Check whether your answer still "
+            f"holds with the new wording, and say what changes.]\nBefore: {before}\nNow: {now}"
+            + (f"\nYour answer was: {said}" if said else ""),
+            edit=True,
+        )
+
+    def answer(
+        self, chat: int, reply: llm.Reply, last: dict, listing: list, reply_to: int | None
+    ) -> None:
+        """Show the answer (replying to reply_to, if any), run its actions and offer its deletes and
+        proposals on behalf of `last`, the newest message it answers."""
+        text = reply.text
         try:
             clean, acts = actions.extract(text)
             if acts:

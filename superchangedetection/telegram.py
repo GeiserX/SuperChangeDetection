@@ -113,7 +113,7 @@ class Telegram:
             "getUpdates",
             offset=offset,
             timeout=timeout,
-            allowed_updates=["message", "callback_query"],
+            allowed_updates=["message", "edited_message", "callback_query"],
         )
 
     def send(

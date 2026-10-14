@@ -26,7 +26,9 @@ With a plugin that can carry out proposals, you can also ask the bot to work dif
 comando que…», «avisa de otra forma…»): it says what it will do and does it outside the chat, and tells you
 how it went. Only the people in `bot.users` can ask for that.
 
-Messages sent while the bot is thinking are kept and go with the next turn; a restart loses none of them.
+Several messages sent together get one answer, and so do messages sent while the bot is thinking: it
+takes them into the answer it is writing. Edit a message and the bot goes by the new wording, even after it
+answered: it says what changes. A restart loses no message.
 
 | command | does |
 |---|---|

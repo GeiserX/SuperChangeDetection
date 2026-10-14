@@ -22,6 +22,10 @@ class Bot(Loose):
         str, str
     ] = {}  # user id (as a string) -> @handle, looked up from Telegram if left out
     history: int = 20  # recent messages kept as context for the AI
+    history_days: int = 0  # and every message of these last days (0: only `history`)
+    # which group messages the AI gets as context: only those that call the bot, or all it sees
+    # (Telegram shows a bot the others only when it is a group admin or privacy mode is off)
+    history_scope: Literal["asked", "all"] = "asked"
     sync_profile: bool = True  # at start, set the bot's command menu and descriptions in Telegram
 
 
