@@ -1308,27 +1308,37 @@ class Bot:
             if item.get("done"):
                 self._cb(cq, self.t("tap_gone"))
                 return
+            who, when = self.who(user), self._when(item["at"])
+            if c == "h":  # stored before the offer says so: a failed write leaves it open
+                self.db.add_reminder(
+                    chat,
+                    user.get("id"),
+                    who,
+                    item["at"],
+                    item["text"],
+                    item["watch"],
+                    item["title"],
+                )
             item["done"] = "here" if c == "h" else "nothing"
             rest = [o for o in offers if o.get("key") != key]
             still = any(not i.get("done") for i in items)
             self.db.set_kv(REMIND, [*rest, offer] if still else rest or None)
-        who, when = self.who(user), self._when(item["at"])
         self._cb(cq, self.t("remind_set", when=when) if c == "h" else None)
         self._rekey(chat, offer.get("msg"), self._remind_markup(key, items))
         if c == "h":
-            self.db.add_reminder(
-                chat, user.get("id"), who, item["at"], item["text"], item["watch"], item["title"]
-            )
             self.note(chat, f"{who} set a reminder here for {when}: {item['text']}")
         else:
             self.note(chat, f"{who} chose no reminder for {when}: {item['text']}")
 
     def tick_reminders(self) -> None:
         """Post every reminder whose time has come, naming the person (a mention that notifies
-        them), then mark it sent; with a watch, check it again and post what it sees. One Telegram
+        them), then mark it sent; with a watch, check it again and post what it sees. Each is
+        claimed first, so a cancel that comes while it is being posted finds it gone. One Telegram
         keeps refusing is dropped after REMIND_GIVE_UP_S."""
         now = _now()
         for r in self.db.due_reminders(now):
+            if not self.db.settle_reminder(r["id"], "sending"):
+                continue  # cancelled since it was read
             body = html.escape(r["text"], quote=False)
             who = html.escape(r.get("who") or "", quote=False)
             if who and r.get("user"):
@@ -1338,10 +1348,10 @@ class Bot:
                 late = self.t("reminder_late", when=self._when(r["at"]))
                 text += "\n" + html.escape(late, quote=False)
             if self.send(r["chat"], text) is None:
-                if now - r["at"] > REMIND_GIVE_UP_S:
-                    self.db.settle_reminder(r["id"], "failed")
+                late = now - r["at"] > REMIND_GIVE_UP_S
+                self.db.settle_reminder(r["id"], "failed" if late else "pending", "sending")
                 continue
-            if self.db.settle_reminder(r["id"], "sent") and r.get("watch"):
+            if self.db.settle_reminder(r["id"], "sent", "sending") and r.get("watch"):
                 self.later(self.recheck_for, r)
 
     def recheck_for(self, r: dict) -> None:

@@ -10,6 +10,8 @@ import threading
 import time
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from superchangedetection import bot as botmod
 from superchangedetection import context, llm
 from superchangedetection.i18n import Translator
@@ -355,3 +357,50 @@ def test_a_from_bot_reply_is_still_answered_after_a_tap(world):
     mid = b.db.get_kv("buttons")[0]["msg"]
     turn(b, message("la otra", reply_to={"message_id": mid, "from": {"id": BOT_ID}}))
     assert ft.texts()[-1] == "Vale."
+
+
+def test_a_failed_write_leaves_the_reminder_offer_open(world, monkeypatch):
+    b, ft, ai, _ = world
+    when, _ = at(2)
+    ai["answers"] = [f"Vale.\n```reminders\n- {when} | Mira\n```"]
+    turn(b, message("@watch_bot recuérdamelo"))
+    offer = ft.sent()[-1]
+
+    def broken(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(b.db, "add_reminder", broken)
+    with pytest.raises(RuntimeError):
+        tap(b, ft, offer, 0)
+    assert b.db.get_kv("remind")[0]["items"][0]["done"] is None and not markups(ft)
+    monkeypatch.undo()
+    tap(b, ft, offer, 0)  # tapped again, it is set
+    assert [r["text"] for r in b.db.reminders(GROUP)] == ["Mira"]
+
+
+def test_a_cancel_while_the_tick_runs_is_never_posted(world, monkeypatch):
+    b, ft, _ai, _ = world
+    rid = b.db.add_reminder(GROUP, ANA, "Ana", time.time() - 1, "Mira")
+    read = b.db.due_reminders
+
+    def then_cancelled(now):
+        rows = read(now)
+        b.db.settle_reminder(rid, "cancelled")  # someone taps Cancelar right now
+        return rows
+
+    monkeypatch.setattr(b.db, "due_reminders", then_cancelled)
+    n = len(ft.sent())
+    b.tick_reminders()
+    assert len(ft.sent()) == n and b.db.reminder(rid)["state"] == "cancelled"
+
+
+def test_a_reminder_telegram_refused_is_tried_again_and_one_cut_off_comes_back(world, monkeypatch):
+    b, _ft, _ai, _ = world
+    rid = b.db.add_reminder(GROUP, ANA, "Ana", time.time() - 1, "Mira")
+    monkeypatch.setattr(b, "send", lambda *a, **k: None)
+    b.tick_reminders()
+    assert b.db.reminder(rid)["state"] == "pending"
+    b.db.settle_reminder(rid, "sending")  # the bot stopped while posting it
+    from superchangedetection.db import DB
+
+    assert DB(b.db.path).reminder(rid)["state"] == "pending"

@@ -47,6 +47,8 @@ class DB:
             for col, kind in (("mid", "INTEGER"), ("asked", "INTEGER"), ("body", "TEXT")):
                 if col not in cols:  # databases from before 0.3.0
                     c.execute(f"ALTER TABLE chat ADD COLUMN {col} {kind}")
+            # a reminder being posted when the bot stopped is posted again
+            c.execute("UPDATE reminder SET state = 'pending' WHERE state = 'sending'")
 
     def conn(self) -> sqlite3.Connection:
         c = sqlite3.connect(self.path, timeout=30)
@@ -239,12 +241,12 @@ class DB:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def settle_reminder(self, rid: int, state: str) -> bool:
-        """Move a pending reminder to sent, cancelled or failed; False when it was no longer
-        pending, so two taps, or a tap and the clock, settle it once."""
+    def settle_reminder(self, rid: int, state: str, was: str = "pending") -> bool:
+        """Move a reminder from `was` to `state` (pending, sending, sent, cancelled, failed); False
+        when it was no longer `was`, so two taps, or a tap and the clock, settle it once."""
         with self._lock, self.conn() as c:
             cur = c.execute(
-                "UPDATE reminder SET state = ? WHERE id = ? AND state = 'pending'", (state, rid)
+                "UPDATE reminder SET state = ? WHERE id = ? AND state = ?", (state, rid, was)
             )
             return cur.rowcount == 1
 
