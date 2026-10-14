@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- The button that declines says «No», not «Nada»: a tap is an action. That covers the «Cada hora» /
+  «Cada día» / «Solo una vez» choice and the reminder offer. «Sin respuesta: nada» still marks an offer
+  nobody tapped. Offers already posted keep working.
+
 ## 0.4.0
 
 - Buttons under an answer when there is a choice to make. Send a link alone and the bot offers how
