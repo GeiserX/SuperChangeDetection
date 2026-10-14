@@ -26,6 +26,12 @@ With a plugin that can carry out proposals, you can also ask the bot to work dif
 comando que…», «avisa de otra forma…»): it says what it will do and does it outside the chat, and tells you
 how it went. Only the people in `bot.users` can ask for that.
 
+When there is a choice to make the bot puts buttons under its answer: send it only a link and it offers
+«Cada hora», «Cada día», «Solo una vez» or «Nada». Tap one, or just keep talking. When it could do
+something useful it offers it with buttons and the line «Si no respondes, no hago nada.»; the buttons
+expire and nothing happens. Ask it to remind you («recuérdame mirar esta página el viernes») and it offers
+a reminder here with a button; at that time it writes in the chat, mentioning you.
+
 Several messages sent together get one answer, and so do messages sent while the bot is thinking: it
 takes them into the answer it is writing. Edit a message and the bot goes by the new wording, even after it
 answered: it says what changes. A restart loses no message.
@@ -36,6 +42,7 @@ answered: it says what changes. A restart loses no message.
 | `/nuevo` (`/new`) | start a fresh conversation with the AI; the watches stay |
 | `/ayuda` (`/help`, `/start`) | what the bot does and how to reach it |
 | `/presentacion` (`/intro`) | the bot introduces itself: how to ask, how to fix a watch, what else it can do here |
+| `/recordatorios` (`/reminders`) | the reminders still to come in this chat, each with a button to cancel it |
 | `/chatid` | this chat's id, for `settings.yaml` |
 
 ## From the command line

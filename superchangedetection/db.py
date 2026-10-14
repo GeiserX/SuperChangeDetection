@@ -1,6 +1,7 @@
 """State the bot keeps, in SQLite under the data directory: the chat history the AI gets as a
 recap, the lines not yet sent to the AI, one conversation id per chat, the open delete offer, the
-pending first checks and the Telegram update offset. Never a copy of the watches.
+pending first checks, the reminders people set and the Telegram update offset. Never a copy of the
+watches.
 
 A chat row keeps the Telegram message id (`mid`) and the message's own words (`body`), so an edit
 finds it and says what it said before; `asked` is 1 for a message that called the bot, 0 for one
@@ -27,6 +28,11 @@ CREATE TABLE IF NOT EXISTS followup (
   id INTEGER PRIMARY KEY AUTOINCREMENT, row TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS reminder (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, chat INTEGER NOT NULL, user INTEGER, who TEXT,
+  at REAL NOT NULL, text TEXT NOT NULL, watch TEXT, title TEXT,
+  state TEXT NOT NULL DEFAULT 'pending', created TEXT NOT NULL
+);
 """
 
 
@@ -41,6 +47,8 @@ class DB:
             for col, kind in (("mid", "INTEGER"), ("asked", "INTEGER"), ("body", "TEXT")):
                 if col not in cols:  # databases from before 0.3.0
                     c.execute(f"ALTER TABLE chat ADD COLUMN {col} {kind}")
+            # a reminder being posted when the bot stopped is posted again
+            c.execute("UPDATE reminder SET state = 'pending' WHERE state = 'sending'")
 
     def conn(self) -> sqlite3.Connection:
         c = sqlite3.connect(self.path, timeout=30)
@@ -182,6 +190,65 @@ class DB:
     def drop_followup(self, row: dict) -> None:
         with self._lock, self.conn() as c:
             c.execute("DELETE FROM followup WHERE id = ?", (row["_id"],))
+
+    # ---- reminders: posted in their chat at `at` (epoch seconds), then marked sent
+    def add_reminder(
+        self,
+        chat: int,
+        user: int | None,
+        who: str | None,
+        at: float,
+        text: str,
+        watch: str | None = None,
+        title: str | None = None,
+    ) -> int:
+        with self._lock, self.conn() as c:
+            cur = c.execute(
+                "INSERT INTO reminder (chat, user, who, at, text, watch, title, created) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    chat,
+                    user,
+                    who,
+                    at,
+                    text[:500],
+                    watch,
+                    title,
+                    dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def reminders(self, chat: int) -> list[dict]:
+        """A chat's reminders still to come, soonest first."""
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT * FROM reminder WHERE chat = ? AND state = 'pending' ORDER BY at, id",
+                (chat,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def reminder(self, rid: int) -> dict | None:
+        with self.conn() as c:
+            r = c.execute("SELECT * FROM reminder WHERE id = ?", (rid,)).fetchone()
+        return dict(r) if r else None
+
+    def due_reminders(self, now: float) -> list[dict]:
+        with self.conn() as c:
+            rows = c.execute(
+                "SELECT * FROM reminder WHERE state = 'pending' AND at <= ? ORDER BY at, id",
+                (now,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def settle_reminder(self, rid: int, state: str, was: str = "pending") -> bool:
+        """Move a reminder from `was` to `state` (pending, sending, sent, cancelled, failed); False
+        when it was no longer `was`, so two taps, or a tap and the clock, settle it once."""
+        with self._lock, self.conn() as c:
+            cur = c.execute(
+                "UPDATE reminder SET state = ? WHERE id = ? AND state = ?", (state, rid, was)
+            )
+            return cur.rowcount == 1
 
     # ---- small values
     def get_kv(self, key: str):

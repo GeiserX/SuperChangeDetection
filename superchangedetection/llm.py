@@ -35,6 +35,15 @@ Providers:
   handed-over line it does not name goes with the next turn. A plugin that never calls incoming()
   covers nothing extra, and those lines make the next turn.
 
+Buttons and reminders: an answer may end with blocks the app turns into buttons, for every provider
+(the rules teach them, context.RULES): ```options (a choice: "- label" lines), ```confirm (a yes or
+no question, no lines), ```offer (something the assistant could do: "- label" lines, Yes and No when
+none), and ```reminders ("- YYYY-MM-DD HH:MM | text | watch number" lines, the watch optional). The
+app takes them out of the text. A plugin may instead return them beside the text, and these win:
+"buttons": {"kind": "options" | "confirm" | "offer", "labels": [str, ...]} and
+"reminders": [{"when": "YYYY-MM-DD HH:MM", "text": str, "watch": str | None}, ...]. A tap is that
+person's next message; an untapped offer expires and nothing is done.
+
 Voice notes (settings.yaml, `transcription`): openai is any /audio/transcriptions endpoint; plugin
 is a file defining transcribe(audio: bytes, filename: str, settings: dict) -> str.
 
@@ -45,6 +54,7 @@ and history plus new as the messages. They keep nothing between turns.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -74,6 +84,83 @@ class Reply:
     kept: bool = True
     proposals: list[dict] = field(default_factory=list)
     covers: set[int] = field(default_factory=set)  # handed-over lines the answer took in
+    buttons: dict | None = None  # {"kind": options | confirm | offer, "labels": [...]}
+    reminders: list[dict] = field(default_factory=list)  # {"when", "text", "watch"} to offer
+
+
+BUTTON_KINDS = ("options", "confirm", "offer")
+LABELS_MAX, LABEL_CHARS = 5, 40
+BUTTONS = re.compile(r"\n?```(options|confirm|offer)[ \t]*\n(.*?)```[ \t]*", re.DOTALL)
+REMINDERS_MAX, REMINDER_CHARS = 5, 300
+REMINDERS = re.compile(r"\n?```reminders[ \t]*\n(.*?)```[ \t]*", re.DOTALL)
+WHEN = re.compile(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}")
+
+
+def buttons(kind, labels) -> dict | None:
+    """Well-formed buttons: a known kind and short, distinct labels (at most LABELS_MAX). A confirm
+    takes no labels (the app shows yes and no); options need at least one; an offer with none gets
+    yes and no. Anything else is None."""
+    if kind not in BUTTON_KINDS:
+        return None
+    out: list[str] = []
+    for x in labels if isinstance(labels, list) else []:
+        label = " ".join(str(x).split()) if isinstance(x, str | int | float) else ""
+        if label and len(label) <= LABEL_CHARS and label not in out:
+            out.append(label)
+    if kind == "confirm":
+        return {"kind": kind, "labels": []}
+    if kind == "options" and not out:
+        return None
+    return {"kind": kind, "labels": out[:LABELS_MAX]}
+
+
+def extract_buttons(text: str) -> tuple[str, dict | None]:
+    """The answer without its buttons blocks, and the buttons of the last one."""
+    blocks = list(BUTTONS.finditer(text or ""))
+    if not blocks:
+        return text or "", None
+    kind, body = blocks[-1].group(1), blocks[-1].group(2)
+    lines = [x.strip() for x in body.splitlines()]
+    labels = [x[1:].strip() for x in lines if x.startswith(("-", "*"))]
+    return BUTTONS.sub("", text).strip(), buttons(kind, labels)
+
+
+def reminders(raw) -> list[dict]:
+    """Well-formed reminders: a time written as YYYY-MM-DD HH:MM, a short text, a watch (its number
+    or uuid) or None; at most REMINDERS_MAX, anything else is dropped. Whether the time is still to
+    come is the app's to judge when it offers them."""
+    out: list[dict] = []
+    for r in raw if isinstance(raw, list) else []:
+        if not isinstance(r, dict):
+            continue
+        when = str(r.get("when") or "").strip()
+        text = " ".join(str(r.get("text") or "").split())
+        watch = r.get("watch")
+        watch = str(watch).strip() if isinstance(watch, str | int) and str(watch).strip() else None
+        if not WHEN.fullmatch(when) or not text or len(text) > REMINDER_CHARS:
+            continue
+        item = {"when": when.replace("T", " "), "text": text, "watch": watch}
+        if all((o["when"], o["text"]) != (item["when"], item["text"]) for o in out):
+            out.append(item)
+    return out[:REMINDERS_MAX]
+
+
+def extract_reminders(text: str) -> tuple[str, list[dict]]:
+    """The answer without its reminders block, and the reminders it lists."""
+    blocks = list(REMINDERS.finditer(text or ""))
+    if not blocks:
+        return text or "", []
+    found = []
+    for line in blocks[-1].group(1).splitlines():
+        line = line.strip()
+        if not line.startswith(("-", "*")):
+            continue
+        parts = [x.strip() for x in line[1:].split("|")]
+        if len(parts) >= 2:
+            found.append(
+                {"when": parts[0], "text": parts[1], "watch": parts[2] if len(parts) > 2 else None}
+            )
+    return REMINDERS.sub("", text).strip(), reminders(found)
 
 
 def can_act(data: Data) -> bool:
@@ -112,12 +199,15 @@ def converse(data: Data, turn: dict) -> Reply:
         if isinstance(out, dict):
             conv = out.get("conversation")
             covers = out.get("covers")
+            b = out.get("buttons")
             return Reply(
                 str(out.get("text", "")).strip(),
                 str(conv) if conv else None,
                 bool(out.get("kept", True)),
                 _proposals(out.get("proposals")),
                 {i for i in covers if type(i) is int} if isinstance(covers, list) else set(),
+                buttons(b.get("kind"), b.get("labels")) if isinstance(b, dict) else None,
+                reminders(out.get("reminders")),
             )
         return Reply(str(out).strip())
     system = f"{turn['rules']}\n\n{turn['context']}"
@@ -283,9 +373,13 @@ __all__ = [
     "Path",
     "Reply",
     "act",
+    "buttons",
     "can_act",
     "complete",
     "converse",
+    "extract_buttons",
+    "extract_reminders",
     "forget",
+    "reminders",
     "transcribe",
 ]

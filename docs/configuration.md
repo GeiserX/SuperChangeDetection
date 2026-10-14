@@ -93,6 +93,12 @@ correction. The answer dict names the ones it took into account as `"covers": [i
 over and not named goes with the next turn. A plugin that never calls `incoming()` gets those lines in the
 next turn.
 
+The answer may put buttons under it and offer reminders, as fenced blocks at the end of the text that
+the app takes out (`scd rules` teaches them to the AI): `options`, `confirm`, `offer` and `reminders`
+([How it works](how-it-works.md)). A plugin may return them beside the text instead, and these win:
+`"buttons": {"kind": "options" | "confirm" | "offer", "labels": [...]}` and `"reminders": [{"when":
+"YYYY-MM-DD HH:MM", "text", "watch": number or uuid or null}]`.
+
 A plugin may also define
 
 ```python
