@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.4
+
+- The shared principles now treat the household group as a place of trust: in it, anyone may ask about
+  anyone else's data and the AI answers, unless the household turned that off in its settings. A
+  private chat gets that person's own data, and an admin may ask about anyone. Nothing private goes
+  public, and the AI never asks one member to get another's permission in the group.
+
 ## 0.4.3
 
 - The AI reads the shared assistant principles first, in the chat's language: whom it answers, buttons,
