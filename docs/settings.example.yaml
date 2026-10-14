@@ -7,6 +7,8 @@ bot:
   chat_id: -100123456789   # the group; anyone in it may use the bot
   users: [123456789]       # Telegram user ids that may also talk to the bot in private
   history: 20              # recent messages the AI sees
+  history_days: 0          # and every message of these last days (0: only `history`)
+  history_scope: asked     # asked | all: all = group messages that do not call the bot go as context
 
 changedetection:
   url: http://changedetection:5000

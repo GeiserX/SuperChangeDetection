@@ -26,6 +26,15 @@ Providers:
   one of bot.users. Only bot.users may ask for a proposal. act() returns the text to post, or
   {"text": ..., "proposals": [...]} with follow-ups, offered the same way.
 
+  One answer per burst: every line of `new` and `history` also carries "ts" (when it was written,
+  ISO 8601 UTC), and the app sets
+      turn["incoming"]() -> [{"id": int, "role": "user", "content": str, "ts": str}, ...]
+  which the plugin may call from its thread while it works: each call hands over the lines that
+  called the bot since the last call (an edit of a line of this turn comes as a correction in the
+  same shape). The answer dict then names the ones it took into account, "covers": [ids]; every
+  handed-over line it does not name goes with the next turn. A plugin that never calls incoming()
+  covers nothing extra, and those lines make the next turn.
+
 Voice notes (settings.yaml, `transcription`): openai is any /audio/transcriptions endpoint; plugin
 is a file defining transcribe(audio: bytes, filename: str, settings: dict) -> str.
 
@@ -64,6 +73,7 @@ class Reply:
     conversation: str | None = None
     kept: bool = True
     proposals: list[dict] = field(default_factory=list)
+    covers: set[int] = field(default_factory=set)  # handed-over lines the answer took in
 
 
 def can_act(data: Data) -> bool:
@@ -101,11 +111,13 @@ def converse(data: Data, turn: dict) -> Reply:
         out = fn({**turn, "proposals": can_act(data)}, _settings(data))
         if isinstance(out, dict):
             conv = out.get("conversation")
+            covers = out.get("covers")
             return Reply(
                 str(out.get("text", "")).strip(),
                 str(conv) if conv else None,
                 bool(out.get("kept", True)),
                 _proposals(out.get("proposals")),
+                {i for i in covers if type(i) is int} if isinstance(covers, list) else set(),
             )
         return Reply(str(out).strip())
     system = f"{turn['rules']}\n\n{turn['context']}"

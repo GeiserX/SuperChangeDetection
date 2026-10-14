@@ -21,6 +21,8 @@ from the environment only. Defaults are the values shown.
 | `users` | `[]` | Telegram user ids that may also talk to the bot in private, and the only ones who may ask for a proposal |
 | `handles` | `{}` | user id (as a string) to `@handle`; looked up from Telegram when left out |
 | `history` | `20` | recent messages kept as context for the AI |
+| `history_days` | `0` | and every message of these last days, for a provider that has to start over (`0`: only `history`) |
+| `history_scope` | `asked` | `asked` or `all`: with `all`, group messages that do not call the bot go to the AI as context with its next turn; Telegram shows a bot those only when it is a group admin or privacy mode is off |
 | `sync_profile` | `true` | set the bot's command menu and descriptions in Telegram at start |
 
 ## `changedetection`
@@ -51,7 +53,8 @@ from the environment only. Defaults are the values shown.
 
 ## `transcription`
 
-Voice notes. With a provider, a voice note from someone allowed is always answered, in the group too.
+Voice notes. With a provider, a voice note or audio file from someone allowed is always answered, in the
+group too, with its caption if it has one.
 
 | key | default | meaning |
 |---|---|---|
@@ -81,6 +84,14 @@ Return the answer, or `{"text", "conversation", "kept"}`: the app keeps `convers
 it back next time; `kept: false` means the provider did not store this turn, so the lines go again with the
 next one. The plugin must return before `timeout_s`. The answer may end with one `actions` block
 ([How it works](how-it-works.md)); the app validates it.
+
+Every line of `new` and `history` also has `ts`, when it was written (ISO 8601, UTC). A line that starts
+with `chat:` did not call the bot (`bot.history_scope: all`). `turn["incoming"]` is a function the plugin
+may call from its thread while it works: each call returns the lines that called the bot since the last
+call, `[{"id", "role": "user", "content", "ts"}]`, an edit of a line of this turn included as a
+correction. The answer dict names the ones it took into account as `"covers": [ids]`; every line handed
+over and not named goes with the next turn. A plugin that never calls `incoming()` gets those lines in the
+next turn.
 
 A plugin may also define
 
