@@ -57,5 +57,7 @@ def test_the_apps_rules_no_longer_repeat_what_the_principles_say():
         "say what changes",
         "without an answer nothing is done",
         "A label that declines",
+        "A yes-or-no offer gets",
+        "Never «Nada» on a button",
     ):
         assert gone.lower() not in own, gone

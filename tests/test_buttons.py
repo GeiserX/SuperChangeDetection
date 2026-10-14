@@ -128,6 +128,26 @@ def test_the_rules_say_whom_it_answers_and_offer_the_exact_labels():
     assert "Never offer buttons for a delete" in rules
 
 
+def test_the_rules_say_a_tap_is_an_action_so_no_button_says_nada():
+    # the shared principles say it, in the chat's language; the app's own rules only name the line
+    # for no tap, which the app writes itself
+    says = {
+        "es": ("Pulsar un botón es una acción", "lleva «Sí» y «No»", "Nunca «Nada» en un botón"),
+        "en": (
+            "A tap on a button is an action",
+            'gets "Yes" and "No"',
+            'Never "Nothing" on a button',
+        ),
+    }
+    for locale, lines in says.items():
+        rules = context.rules(Settings(locale=locale, timezone="Europe/Madrid"), Translator(locale))
+        flat = " ".join(rules.split())
+        for line in lines:
+            assert line in flat, line
+        assert "«Si no respondes, no hago nada.»" in flat
+        assert "- Nada" not in flat
+
+
 # ---- buttons under an answer
 
 
