@@ -92,8 +92,8 @@ followup_late: "⏳ The first check of «{title}» has not finished after {minut
 
 # ---- buttons under an answer, and reminders
 # what to offer when someone sends a page without saying how often: every hour, every day, look
-# once now (no watch), nothing
-paste_options: ["Every hour", "Every day", "Just once", "Nothing"]
+# once now (no watch), no (nothing)
+paste_options: ["Every hour", "Every day", "Just once", "No"]
 options_hint: "Or tell me something else."
 confirm_hint: "If you want something else, reply to this message."
 offer_hint: "If you do not answer, I do nothing."
@@ -102,7 +102,7 @@ tap_gone: "This is no longer waiting for an answer."
 tapped: "«{label}» (tapped under your message: {question})"
 remind_offer: "{name}, shall I remind you?\n{lines}\n\nIf you do not answer, I do nothing."
 remind_here: "Reminder here"
-remind_nothing: "Nothing"
+remind_nothing: "No"
 remind_set: "I will remind you here on {when}."
 remind_watch: " (and I check «{title}» again)"
 reminder_when: "{weekday} {day} {month}, {time}"

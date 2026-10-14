@@ -122,7 +122,7 @@ def test_the_rules_say_whom_it_answers_and_offer_the_exact_labels():
     assert "Act only on what is addressed to you." in rules
     assert "start with `chat:` and are context only" in rules
     assert '"Cada hora" (an interval of 1 hour), "Cada día" (1 day), "Solo una vez"' in rules
-    assert '"Nada" (nothing)' in rules
+    assert '"No" (nothing)' in rules
     assert "```reminders" in rules and "Europe/Madrid" in rules and "/recordatorios" in rules
     assert "Never offer buttons for a delete" in rules
 
@@ -163,7 +163,7 @@ def test_a_confirm_shows_yes_and_no_and_says_they_can_reply_otherwise(world):
 
 def test_an_offer_expires_and_then_says_nobody_answered(world, monkeypatch):
     b, ft, ai, _ = world
-    ai["answers"] = ["Hecho.\n```offer\n- Vigila también /precios\n- Nada\n```"]
+    ai["answers"] = ["Hecho.\n```offer\n- Vigila también /precios\n- No\n```"]
     turn(b, message("@watch_bot vigila https://a.example/x"))
     sent = ft.sent()[-1]
     assert sent["text"].endswith("<i>Si no respondes, no hago nada.</i>")
@@ -225,7 +225,7 @@ def test_a_reminder_is_offered_set_with_a_tap_and_posted_at_its_time(world, monk
         "Mira la página (y vuelvo a mirar «A»)" in offer["text"] and "Ya pasó" not in offer["text"]
     )
     assert offer["text"].endswith("Si no respondes, no hago nada.")
-    assert labels(offer["reply_markup"]) == ["Recordatorio aquí", "Nada"]
+    assert labels(offer["reply_markup"]) == ["Recordatorio aquí", "No"]
     tap(b, ft, offer, 1, user=LUIS, name="Luis")
     assert toast(ft) == "Solo Ana puede responder a esto." and not b.db.reminders(GROUP)
     tap(b, ft, offer, 0)
@@ -288,12 +288,12 @@ def test_nothing_is_a_choice_too_and_the_ai_hears_it(world):
     offer = ft.sent()[-1]
     assert labels(offer["reply_markup"]) == [
         "1 · Recordatorio aquí",
-        "1 · Nada",
+        "1 · No",
         "2 · Recordatorio aquí",
-        "2 · Nada",
+        "2 · No",
     ]
     tap(b, ft, offer, 1, row=0)
-    assert labels(markups(ft)[-1])[:1] == ["✓ 1 · Nada"] and b.db.get_kv("remind")
+    assert labels(markups(ft)[-1])[:1] == ["✓ 1 · No"] and b.db.get_kv("remind")
     assert "Ana chose no reminder for" in b.db.get_kv(f"app:{GROUP}")
     tap(b, ft, offer, 0, row=1)
     assert not b.db.get_kv("remind") and [r["text"] for r in b.db.reminders(GROUP)] == ["Dos"]

@@ -27,7 +27,7 @@ comando que…», «avisa de otra forma…»): it says what it will do and does 
 how it went. Only the people in `bot.users` can ask for that.
 
 When there is a choice to make the bot puts buttons under its answer: send it only a link and it offers
-«Cada hora», «Cada día», «Solo una vez» or «Nada». Tap one, or just keep talking. When it could do
+«Cada hora», «Cada día», «Solo una vez» or «No». Tap one, or just keep talking. When it could do
 something useful it offers it with buttons and the line «Si no respondes, no hago nada.»; the buttons
 expire and nothing happens. Ask it to remind you («recuérdame mirar esta página el viernes») and it offers
 a reminder here with a button; at that time it writes in the chat, mentioning you.

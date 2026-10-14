@@ -80,7 +80,7 @@ An answer may end with one block that the app turns into buttons under it, with 
 happens if nobody taps:
 
 - `options`, one `- label` per line: a choice. When someone sends only a page, the AI offers how often
-  («Cada hora», «Cada día», «Solo una vez», «Nada» in Spanish: the `paste_options` of the locale); when a
+  («Cada hora», «Cada día», «Solo una vez», «No» in Spanish: the `paste_options` of the locale); when a
   page has several sections someone could mean, it offers those. The line under them says they can also
   just write.
 - `confirm`, with no lines: a yes or no question, with Sí and No, and a line saying they can answer
@@ -104,7 +104,7 @@ at again at a set time, the AI ends its answer with a `reminders` block, one lin
 ```
 
 The time is in the instance's `timezone`; the last field, optional, is a watch. The app offers them in one
-message, each with «Recordatorio aquí» and «Nada», and says that without an answer nothing is done: an
+message, each with «Recordatorio aquí» and «No», and says that without an answer nothing is done: an
 offer nobody taps expires after 30 minutes. A reminder set here is stored in SQLite and posted in the chat
 at its time, mentioning the person, and with a watch the app also checks it again and posts what it sees.
 One posted late (after a restart) says so. `/recordatorios` lists the chat's reminders still to come, each

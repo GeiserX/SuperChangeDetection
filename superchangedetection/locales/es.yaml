@@ -88,7 +88,7 @@ followup_error: "⚠️ La primera comprobación de «{title}» ha fallado: {see
 followup_late: "⏳ La primera comprobación de «{title}» sigue sin terminar después de {minutes} minutos. Te avisaré cuando cambie; si quieres, pregúntame qué ve o pídeme que cambie el modo de descarga."
 
 # ---- botones bajo una respuesta, y recordatorios
-paste_options: ["Cada hora", "Cada día", "Solo una vez", "Nada"]
+paste_options: ["Cada hora", "Cada día", "Solo una vez", "No"]
 options_hint: "O cuéntame otra cosa."
 confirm_hint: "Si quieres otra cosa, responde a este mensaje."
 offer_hint: "Si no respondes, no hago nada."
@@ -97,7 +97,7 @@ tap_gone: "Esto ya no está esperando respuesta."
 tapped: "«{label}» (pulsado bajo tu mensaje: {question})"
 remind_offer: "{name}, ¿quieres que te lo recuerde?\n{lines}\n\nSi no respondes, no hago nada."
 remind_here: "Recordatorio aquí"
-remind_nothing: "Nada"
+remind_nothing: "No"
 remind_set: "Te lo recuerdo aquí el {when}."
 remind_watch: " (y vuelvo a mirar «{title}»)"
 reminder_when: "{weekday} {day} de {month}, {time}"
