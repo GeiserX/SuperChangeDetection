@@ -74,6 +74,49 @@ With `bot.history_scope: all`, the group's messages that do not call the bot are
 AI with its next turn, marked `chat:`, as context it does not answer. In a group, Telegram shows a bot
 those messages and their edits only when it is an admin of the group (or privacy mode is off).
 
+## Buttons
+
+An answer may end with one block that the app turns into buttons under it, with a line saying what
+happens if nobody taps:
+
+- `options`, one `- label` per line: a choice. When someone sends only a page, the AI offers how often
+  («Cada hora», «Cada día», «Solo una vez», «Nada» in Spanish: the `paste_options` of the locale); when a
+  page has several sections someone could mean, it offers those. The line under them says they can also
+  just write.
+- `confirm`, with no lines: a yes or no question, with Sí and No, and a line saying they can answer
+  something else by replying.
+- `offer`: something useful the assistant could do that nobody asked for, with its labels (Sí and No when
+  it has none) and the line «Si no respondes, no hago nada.».
+
+A tap is that person's next message, as if typed, and the answer to it replies to the question. Only the
+people the answer was for may tap; anyone else gets a note and nothing changes. Once tapped, the buttons
+give way to the chosen label. Nothing waits for a tap: options and confirms lose their buttons after 12 hours,
+an offer after 30 minutes, and then its button says that nobody answered. A delete keeps its own question
+(«¿Dejo de vigilar …?») with Sí and No, answered only by the person who asked.
+
+## Reminders
+
+When someone asks to be reminded ("remind me to look at this page on Friday"), or a page is worth looking
+at again at a set time, the AI ends its answer with a `reminders` block, one line each:
+
+```reminders
+- 2026-01-16 09:00 | Look at the ticket page | 3
+```
+
+The time is in the instance's `timezone`; the last field, optional, is a watch. The app offers them in one
+message, each with «Recordatorio aquí» and «Nada», and says that without an answer nothing is done: an
+offer nobody taps expires after 30 minutes. A reminder set here is stored in SQLite and posted in the chat
+at its time, mentioning the person, and with a watch the app also checks it again and posts what it sees.
+One posted late (after a restart) says so. `/recordatorios` lists the chat's reminders still to come, each
+with a button to cancel it. The AI hears every choice with its next turn.
+
+## Whom the AI answers
+
+The rules tell the AI how people reach it (a mention, a reply to one of its messages, a voice note, a tap
+on one of its buttons), that the group's other lines (`chat:`) are context only, and that a remark between
+people about the bot is never a request: no watch is created, changed or deleted, and no change to the
+app is asked for, because of one.
+
 ## Notifications
 
 Every watch the bot creates carries one apprise URL, `tgram://<bot token>/<chat id>/`, so changedetection

@@ -30,6 +30,7 @@ commands:
   nuevo: "Empezar una conversación nueva"
   ayuda: "Qué sé hacer"
   presentacion: "Quién soy y cómo hablarme"
+  recordatorios: "Los recordatorios pendientes, para cancelarlos"
 description: "Dime qué página quieres vigilar y te aviso cuando cambie. En un grupo, mencióname o responde a uno de mis mensajes."
 short_description: "Avisos cuando cambia una web"
 help: |
@@ -39,6 +40,7 @@ help: |
   {voice}{changes}
   /lista: los avisos de este chat
   /nuevo: empezar una conversación nueva
+  /recordatorios: los recordatorios pendientes, para cancelarlos
   /presentacion: quién soy y cómo hablarme
   /ayuda: esto
 help_voice: "Las notas de voz también valen: las escucho siempre, también en el grupo.\n"
@@ -50,9 +52,11 @@ intro: |
   • Dime qué quieres vigilar, con el enlace, y lo monto yo: «@{handle} vigila https://… y avísame si cambia el precio». Elijo la parte de la página que importa y cada cuánto mirar, y luego te enseño lo que ve.
   • Cuando cambie, te escribo aquí con el enlace al cambio. Para eso no hace falta hablarme.
   • Si te aviso sin motivo, o cambia algo y me callo, responde a ese aviso y lo ajusto.
-  • En el grupo solo contesto si me mencionas o respondes a un mensaje mío.
+  • En el grupo solo contesto si me mencionas o respondes a un mensaje mío. Leo el resto del chat para tener contexto, pero un comentario entre vosotros sobre mí no es una orden.
+  • Cuando hay que elegir, pongo botones debajo de mi respuesta; puedes pulsar uno o seguir hablando. Cuando puedo hacer algo útil, te lo ofrezco con botones, y si no respondes, no hago nada.
+  • Si hay algo que conviene recordar a una hora («recuérdame mirar esta página el viernes»), te ofrezco un recordatorio aquí con un botón. /recordatorios los enseña y deja cancelarlos.
   {voice}{changes}{mentions}
-  /lista: los avisos de este chat · /nuevo: empezar de cero · /ayuda: esto mismo, resumido
+  /lista: los avisos de este chat · /recordatorios: los recordatorios · /nuevo: empezar de cero · /ayuda: esto mismo, resumido
 intro_voice: "• Las notas de voz las escucho siempre, también en el grupo, y escribo lo que he oído.\n"
 intro_changes: "• Si quieres que funcione de otra forma (un comando nuevo, otra manera de avisar), pídemelo aquí y lo cambio yo; se activa con mi siguiente versión.\n"
 intro_mentions: "• Ahora mismo no me llegan las menciones del grupo: hazme administrador del grupo, o responde a mis mensajes.\n"
@@ -67,12 +71,12 @@ instance_down: "No llego a changedetection ahora mismo. Vuelve a intentarlo en u
 bad_actions: "He entendido lo que quieres pero me he liado al escribir el cambio y no he tocado nada. Dímelo otra vez, si puede ser de otra forma."
 button_yes: "Sí"
 button_no: "No"
-offer_delete: "¿Borro {titles}? Solo {who} puede confirmarlo."
+offer_delete: "¿Dejo de vigilar {titles}? Solo {who} puede confirmarlo.\n\nSi quieres otra cosa, responde a este mensaje."
 offer_only_asker: "Solo {who} puede responder a esto."
 offer_expired: "Esa pregunta ya caducó; pídemelo otra vez."
 offer_no: "Vale, no borro nada."
-offer_proposal: "{summary}\n\n¿Lo hago? Solo {who} puede confirmarlo."
-offer_proposal_users: "{summary}\n\n¿Lo hago? Solo puede confirmarlo quien me administra."
+offer_proposal: "{summary}\n\n¿Lo hago? Solo {who} puede confirmarlo.\n\nSi quieres otra cosa, responde a este mensaje."
+offer_proposal_users: "{summary}\n\n¿Lo hago? Solo puede confirmarlo quien me administra.\n\nSi quieres otra cosa, responde a este mensaje."
 offer_only_users: "Solo quien me administra puede responder a esto."
 offer_proposal_no: "Vale, no lo hago."
 proposal_members_only: "Esto solo me lo puede pedir quien me administra."
@@ -82,3 +86,26 @@ proposal_interrupted: "Me reinicié mientras trabajaba en esto y no terminó. P�
 followup_ok: "✅ Ya he hecho la primera comprobación de «{title}». Lo que ve ahora:\n«{seen}»"
 followup_error: "⚠️ La primera comprobación de «{title}» ha fallado: {seen}"
 followup_late: "⏳ La primera comprobación de «{title}» sigue sin terminar después de {minutes} minutos. Te avisaré cuando cambie; si quieres, pregúntame qué ve o pídeme que cambie el modo de descarga."
+
+# ---- botones bajo una respuesta, y recordatorios
+paste_options: ["Cada hora", "Cada día", "Solo una vez", "Nada"]
+options_hint: "O cuéntame otra cosa."
+confirm_hint: "Si quieres otra cosa, responde a este mensaje."
+offer_hint: "Si no respondes, no hago nada."
+button_timeout: "Sin respuesta: nada"
+tap_gone: "Esto ya no está esperando respuesta."
+tapped: "«{label}» (pulsado bajo tu mensaje: {question})"
+remind_offer: "{name}, ¿quieres que te lo recuerde?\n{lines}\n\nSi no respondes, no hago nada."
+remind_here: "Recordatorio aquí"
+remind_nothing: "Nada"
+remind_set: "Te lo recuerdo aquí el {when}."
+remind_watch: " (y vuelvo a mirar «{title}»)"
+reminder_when: "{weekday} {day} de {month}, {time}"
+weekdays: [lunes, martes, miércoles, jueves, viernes, sábado, domingo]
+months: [enero, febrero, marzo, abril, mayo, junio, julio, agosto, septiembre, octubre, noviembre, diciembre]
+reminder_late: "(con retraso: era para el {when})"
+reminders_none: "No hay recordatorios pendientes en este chat."
+reminders_title: "⏰ Recordatorios pendientes:"
+reminders_cancel: "Cancelar {n}"
+reminders_cancelled: "Cancelado {n}"
+reminder_cancelled: "Cancelado."

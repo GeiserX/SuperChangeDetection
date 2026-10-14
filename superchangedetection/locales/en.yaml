@@ -33,6 +33,7 @@ commands:
   nuevo: "Start a new conversation"
   ayuda: "What I can do"
   presentacion: "Who I am and how to talk to me"
+  recordatorios: "Reminders still to come, to cancel them"
 description: "Tell me which page to watch and I will write here when it changes. In a group, mention me or reply to one of my messages."
 short_description: "Alerts when a web page changes"
 help: |
@@ -42,6 +43,7 @@ help: |
   {voice}{changes}
   /lista: the watches of this chat
   /nuevo: start a new conversation
+  /recordatorios: the reminders still to come, to cancel them
   /presentacion: who I am and how to talk to me
   /ayuda: this
 help_voice: "Voice notes work too: I always listen to them, in the group as well.\n"
@@ -53,9 +55,11 @@ intro: |
   • Tell me what to watch, with the link, and I set it up: "@{handle} watch https://… and tell me if the price changes". I pick the part of the page that matters and how often to look, then show you what it sees.
   • When it changes, I write here with a link to the change. You do not need to talk to me for that.
   • If I warn you for nothing, or something changes and I stay silent, reply to that alert and I will adjust it.
-  • In a group I only answer when you mention me or reply to one of my messages.
+  • In a group I only answer when you mention me or reply to one of my messages. I read the rest of the chat for context, but a remark between you about me is not an order.
+  • When there is a choice I put buttons under my answer; you can tap one or just keep talking. When I could do something useful I offer it with buttons, and if you do not answer I do nothing.
+  • When something is worth remembering at a time ("remind me to look at this page on Friday"), I offer a reminder here with a button. /recordatorios lists them and lets you cancel them.
   {voice}{changes}{mentions}
-  /lista: the watches of this chat · /nuevo: start over · /ayuda: this, in short
+  /lista: the watches of this chat · /recordatorios: reminders · /nuevo: start over · /ayuda: this, in short
 intro_voice: "• Voice notes: I always listen to them, in the group as well, and write down what I heard.\n"
 intro_changes: "• If you want me to work differently (a new command, another way of telling you), ask me here and I will change it myself; it goes live with my next release.\n"
 intro_mentions: "• Right now the group's mentions do not reach me: make me an admin of the group, or reply to my messages.\n"
@@ -70,12 +74,12 @@ instance_down: "I cannot reach changedetection right now. Try again in a while."
 bad_actions: "I understood what you want but I got the change wrong and touched nothing. Tell me again, in other words if you can."
 button_yes: "Yes"
 button_no: "No"
-offer_delete: "Delete {titles}? Only {who} can confirm."
+offer_delete: "Shall I stop watching {titles}? Only {who} can confirm.\n\nIf you want something else, reply to this message."
 offer_only_asker: "Only {who} can answer this."
 offer_expired: "That question has expired; ask me again."
 offer_no: "OK, nothing deleted."
-offer_proposal: "{summary}\n\nShall I? Only {who} can confirm."
-offer_proposal_users: "{summary}\n\nShall I? Only the people who run me can confirm."
+offer_proposal: "{summary}\n\nShall I? Only {who} can confirm.\n\nIf you want something else, reply to this message."
+offer_proposal_users: "{summary}\n\nShall I? Only the people who run me can confirm.\n\nIf you want something else, reply to this message."
 offer_only_users: "Only the people who run me can answer this."
 offer_proposal_no: "OK, I will not."
 proposal_members_only: "Only the people who run me can ask for this."
@@ -85,3 +89,28 @@ proposal_interrupted: "I restarted while working on this and it did not finish. 
 followup_ok: "✅ The first check of «{title}» is done. What it sees now:\n«{seen}»"
 followup_error: "⚠️ The first check of «{title}» failed: {seen}"
 followup_late: "⏳ The first check of «{title}» has not finished after {minutes} minutes. I will tell you when it changes; if you like, ask me what it sees or ask me to change the fetch mode."
+
+# ---- buttons under an answer, and reminders
+# what to offer when someone sends a page without saying how often: every hour, every day, look
+# once now (no watch), nothing
+paste_options: ["Every hour", "Every day", "Just once", "Nothing"]
+options_hint: "Or tell me something else."
+confirm_hint: "If you want something else, reply to this message."
+offer_hint: "If you do not answer, I do nothing."
+button_timeout: "No answer: nothing"
+tap_gone: "This is no longer waiting for an answer."
+tapped: "«{label}» (tapped under your message: {question})"
+remind_offer: "{name}, shall I remind you?\n{lines}\n\nIf you do not answer, I do nothing."
+remind_here: "Reminder here"
+remind_nothing: "Nothing"
+remind_set: "I will remind you here on {when}."
+remind_watch: " (and I check «{title}» again)"
+reminder_when: "{weekday} {day} {month}, {time}"
+weekdays: [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday]
+months: [January, February, March, April, May, June, July, August, September, October, November, December]
+reminder_late: "(late: it was for {when})"
+reminders_none: "There are no reminders to come in this chat."
+reminders_title: "⏰ Reminders to come:"
+reminders_cancel: "Cancel {n}"
+reminders_cancelled: "Cancelled {n}"
+reminder_cancelled: "Cancelled."

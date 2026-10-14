@@ -238,7 +238,8 @@ def test_a_delete_is_offered_and_only_the_asker_can_confirm(world):
     ai["answers"] = ["Borro A.\n\n```actions\n- op: delete\n  watch: 1\n```"]
     turn(b, message("@watch_bot borra el de A"))
     offer = ft.sent()[-1]
-    assert "¿Borro «A»?" in offer["text"] and "Ana" in offer["text"]
+    assert "¿Dejo de vigilar «A»?" in offer["text"] and "Ana" in offer["text"]
+    assert offer["text"].endswith("Si quieres otra cosa, responde a este mensaje.")
     buttons = offer["reply_markup"]["inline_keyboard"][0]
     assert [x["text"] for x in buttons] == ["Sí", "No"]
     assert U1 in inst.watches

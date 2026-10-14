@@ -33,6 +33,15 @@ the answer.
   a yes from the asker or from one of `bot.users`. Only `bot.users` may ask for one.
 - At start every watch the bot owns gets the app's current notification template, so a template
   change in the locale reaches the old watches too.
+- Buttons: an answer may carry options (a choice), a confirm (yes or no) or an offer (something the
+  assistant could do), shown as buttons under it with a line saying what happens otherwise. A tap
+  is that person's next message, as typed; only the people the answer was for may tap. Nothing
+  waits for a tap: options and confirms lose their buttons after BUTTONS_TTL_S, an offer after
+  OFFER_BUTTONS_TTL_S, and then says nobody answered.
+- Reminders: an answer may list reminders; the bot offers each with «here» and «nothing» buttons.
+  Untapped, the offer expires and nothing is set. A reminder set here is posted in the chat at its
+  time, naming the person, and with a watch it also checks that watch again. /recordatorios lists
+  the chat's reminders with a button to cancel each.
 
 The service log gets event kinds and counts, never a message text or a watch's content.
 """
@@ -71,6 +80,16 @@ DEBOUNCE_S = 2.5
 VOICE_WAIT_S = 30  # a turn waits this long at most for a voice note of its chat still transcribing
 SETTLE_STEP_S = 0.5
 ANSWER_CLIP = 1500  # characters of an earlier answer quoted back with an edit of its message
+BUTTONS = "buttons"  # buttons under answers, across every chat
+BUTTONS_TTL_S = 12 * 3600  # options and confirms can be tapped this long
+OFFER_BUTTONS_TTL_S = 1800  # an offer (and a reminder offer) this long; then nothing is done
+BUTTONS_KEEP = 50
+QUESTION_CLIP = 160  # characters of the question a tap answers, quoted to the AI
+REMIND = "remind"  # reminder offers not yet settled, across every chat
+REMIND_DAYS = 60  # the furthest ahead a reminder may be
+LATE_S = 600  # a reminder posted this much after its time says so
+REMIND_GIVE_UP_S = 86400  # a reminder Telegram keeps refusing is dropped after this
+HINTS = {"options": "options_hint", "confirm": "confirm_hint", "offer": "offer_hint"}
 REF = re.compile(r"(?m)^ref ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$")
 COMMAND = re.compile(r"^/([A-Za-z0-9_]+)(?:@([A-Za-z0-9_]+))?(?:\s+(.*))?$", re.DOTALL)
 COMMANDS = {
@@ -85,6 +104,8 @@ COMMANDS = {
     "chatid": "chatid",
     "presentacion": "intro",
     "intro": "intro",
+    "recordatorios": "reminders",
+    "reminders": "reminders",
 }
 RUNNING = "running"  # proposals being carried out now, across every chat
 YES = {"si", "yes", "vale", "ok", "s", "y", "dale"}
@@ -171,6 +192,7 @@ class Bot:
         self.mentions_ok = True  # the group's @mentions reach the bot (admin, or privacy off)
         self.workers: dict[int, Worker] = {}
         self._lock = threading.Lock()
+        self.klock = threading.Lock()  # the buttons and reminder offers kept in kv
         self.debounce, self.voice_wait, self.clock = DEBOUNCE_S, VOICE_WAIT_S, time.monotonic
         # what the turn loop, incoming() and an edit look at together: guarded by qlock
         self.qlock = threading.Lock()
@@ -607,7 +629,7 @@ class Bot:
             reply.kept,
         )
         asked = [r for r in covered if _asked(r)] or [r for r in rows if _asked(r)]
-        self.answer(chat, reply, asked[-1], listing, _reply_to(asked))
+        self.answer(chat, reply, asked[-1], listing, _reply_to(asked), asked)
 
     def _incoming(self, state: Turn, listing: list):
         """turn["incoming"]: the chat's lines that called the bot since the last call, for the
@@ -744,11 +766,22 @@ class Bot:
         )
 
     def answer(
-        self, chat: int, reply: llm.Reply, last: dict, listing: list, reply_to: int | None
+        self,
+        chat: int,
+        reply: llm.Reply,
+        last: dict,
+        listing: list,
+        reply_to: int | None,
+        asked: list[dict] | None = None,
     ) -> None:
-        """Show the answer (replying to reply_to, if any), run its actions and offer its deletes and
-        proposals on behalf of `last`, the newest message it answers."""
-        text = reply.text
+        """Show the answer (replying to reply_to, if any) with its buttons, run its actions and
+        offer its deletes, proposals and reminders on behalf of `last`, the newest message it
+        answers; `asked`, the messages it answers, say who may tap."""
+        text, found = llm.extract_buttons(reply.text)
+        buttons = reply.buttons or found
+        text, listed = llm.extract_reminders(text)
+        listed = reply.reminders or listed
+        asked = asked or [last]
         try:
             clean, acts = actions.extract(text)
             if acts:
@@ -767,7 +800,10 @@ class Bot:
             return
         if clean:
             self.db.add_chat(chat, "assistant", None, clean)
-            self.send(chat, render.to_html(clean), reply_to=reply_to)
+            if buttons:
+                self.post_buttons(chat, clean, buttons, asked, reply_to)
+            else:
+                self.send(chat, render.to_html(clean), reply_to=reply_to)
             reply_to = None
         now = [a for a in acts or [] if a.op != "delete"]
         deletes = [a for a in acts or [] if a.op == "delete"]
@@ -791,6 +827,8 @@ class Bot:
             self.db.set_kv(f"app:{chat}", "\n".join(notes))
         for p in reply.proposals:
             self.offer_proposal(chat, last, p)
+        if listed:
+            self.offer_reminders(chat, listed, asked, listing, reply_to)
 
     def _typing(self, chat: int, stop: threading.Event) -> None:
         while True:
@@ -956,9 +994,20 @@ class Bot:
         chat = (msg.get("chat") or {}).get("id")
         user = cq.get("from") or {}
         parts = data.split(":")
-        if chat is None or len(parts) != 3 or parts[0] not in ("del", "prop"):
+        if chat is None or len(parts) != 3:
+            self._cb(cq)  # an inert button (what was chosen, or that nobody answered)
             return
         chat = int(chat)
+        taps = {"opt": self.tapped_option, "rem": self.tapped_remind, "can": self.tapped_cancel}
+        if parts[0] in taps:
+            if not self.allowed(msg.get("chat") or {}, user):
+                self._cb(cq)
+                return
+            taps[parts[0]](cq, chat, parts[1], parts[2])
+            return
+        if parts[0] not in ("del", "prop"):
+            self._cb(cq)
+            return
         offer = self.open_offer(chat)
         if not offer or offer.get("id") != parts[1]:
             self._cb(cq, self.t("offer_expired"))
@@ -1034,14 +1083,325 @@ class Bot:
         except TelegramError:
             pass
 
+    # ---- buttons under an answer: options, a confirm, an offer
+
+    def _markup(self, rows: list[list[tuple[str, str]]]) -> dict:
+        return {"inline_keyboard": [[{"text": t, "callback_data": d} for t, d in r] for r in rows]}
+
+    def _rekey(self, chat: int, message_id: int | None, markup: dict | None) -> None:
+        if not message_id:
+            return
+        try:
+            self.tg.edit_markup(chat, message_id, markup)
+        except TelegramError as e:
+            log.info("could not change the buttons of a message: %s", safe(e))
+
+    def _inert(self, label: str) -> dict:
+        return self._markup([[(label, "x")]])
+
+    def post_buttons(
+        self, chat: int, text: str, buttons: dict, asked: list[dict], reply_to: int | None
+    ) -> None:
+        """The answer with its buttons and the line saying what happens otherwise. Only the people
+        it answers may tap."""
+        labels = buttons["labels"] or [self.t("button_yes"), self.t("button_no")]
+        key = uuid.uuid4().hex[:8]
+        cbs = [(label, f"opt:{key}:{n}") for n, label in enumerate(labels)]
+        short = len(labels) <= 2 and all(len(x) <= 16 for x in labels)
+        rows = [cbs] if short else [[c] for c in cbs]
+        hint = html.escape(self.t(HINTS[buttons["kind"]]), quote=False)
+        sent = self.send(
+            chat,
+            f"{render.to_html(text)}\n\n<i>{hint}</i>",
+            reply_to=reply_to,
+            markup=self._markup(rows),
+        )
+        if not sent:
+            return
+        question = " ".join(text.split())
+        if len(question) > QUESTION_CLIP:
+            question = question[: QUESTION_CLIP - 1] + "…"
+        item = {
+            "key": key,
+            "chat": chat,
+            "msg": sent.get("message_id"),
+            "kind": buttons["kind"],
+            "labels": labels,
+            "for": list(dict.fromkeys(r.get("user") for r in asked if r.get("user"))),
+            "who": list(dict.fromkeys(r.get("who") for r in asked if r.get("who"))),
+            "q": question,
+            "ts": _now(),
+        }
+        with self.klock:
+            items = [*(self.db.get_kv(BUTTONS) or []), item]
+            self.db.set_kv(BUTTONS, items[-BUTTONS_KEEP:])
+
+    @staticmethod
+    def _ttl(item: dict) -> int:
+        return OFFER_BUTTONS_TTL_S if item.get("kind") == "offer" else BUTTONS_TTL_S
+
+    def tapped_option(self, cq: dict, chat: int, key: str, n: str) -> None:
+        """A tap under an answer: that person's next message, as if typed, saying which question
+        it answers. The buttons give way to the one chosen."""
+        user = cq.get("from") or {}
+        mid = (cq.get("message") or {}).get("message_id")
+        with self.klock:
+            items = self.db.get_kv(BUTTONS) or []
+            item = next((i for i in items if i.get("key") == key and i.get("chat") == chat), None)
+            if item is None or _now() - item.get("ts", 0) > self._ttl(item):
+                gone = True
+            else:
+                gone = False
+                if item["for"] and user.get("id") not in item["for"]:
+                    self._cb(cq, self.t("offer_only_asker", who=", ".join(item["who"])))
+                    return
+                labels = item.get("labels") or []
+                if not n.isdigit() or int(n) >= len(labels):
+                    self._cb(cq)
+                    return
+                self.db.set_kv(BUTTONS, [i for i in items if i is not item] or None)
+        if gone:
+            self._cb(cq, self.t("tap_gone"))
+            self._rekey(chat, mid, None)
+            return
+        label = labels[int(n)]
+        self._cb(cq)
+        self._rekey(chat, item.get("msg") or mid, self._inert(f"✓ {label}"))
+        # the answer to it replies to the question the choice came from
+        msg = {"message_id": item.get("msg") or mid, "from": user, "chat": {"id": chat}}
+        self.enqueue(chat, msg, f'«{label}» (tapped under your message: "{item["q"]}")')
+
+    def expire_buttons(self) -> None:
+        """Buttons nobody tapped in time: they go, and an offer's (or a reminder offer's) say that
+        nobody answered, so nothing was done."""
+        now = _now()
+        with self.klock:
+            items = self.db.get_kv(BUTTONS) or []
+            gone = [i for i in items if now - i.get("ts", 0) > self._ttl(i)]
+            if gone:
+                self.db.set_kv(BUTTONS, [i for i in items if i not in gone] or None)
+            offers = self.db.get_kv(REMIND) or []
+            late = [o for o in offers if now - o.get("ts", 0) > OFFER_BUTTONS_TTL_S]
+            if late:
+                self.db.set_kv(REMIND, [o for o in offers if o not in late] or None)
+        for i in gone:
+            markup = self._inert(self.t("button_timeout")) if i.get("kind") == "offer" else None
+            self._rekey(i["chat"], i.get("msg"), markup)
+        for o in late:
+            for r in o.get("items") or []:
+                r["done"] = r.get("done") or "timeout"
+            self._rekey(o["chat"], o.get("msg"), self._remind_markup(o["key"], o["items"]))
+
+    # ---- reminders
+
+    def _when(self, at: float) -> str:
+        """A reminder's time as the chat reads it: «viernes 17 de octubre, 09:00»."""
+        local = dt.datetime.fromtimestamp(at, ZoneInfo(self.s.timezone))
+        days = self.t.raw("weekdays") or []
+        months = self.t.raw("months") or []
+        return self.t(
+            "reminder_when",
+            weekday=days[local.weekday()] if len(days) == 7 else "",
+            day=local.day,
+            month=months[local.month - 1] if len(months) == 12 else local.month,
+            time=f"{local:%H:%M}",
+        ).strip()
+
+    def _remind_markup(self, key: str, items: list[dict]) -> dict:
+        """Each reminder's buttons (here, nothing), or one inert button saying what became of it."""
+        labels = {
+            "here": self.t("remind_here"),
+            "nothing": self.t("remind_nothing"),
+            "timeout": self.t("button_timeout"),
+        }
+        rows = []
+        for n, r in enumerate(items):
+            pre = f"{n + 1} · " if len(items) > 1 else ""
+            if r.get("done"):
+                rows.append([(f"✓ {pre}{labels[r['done']]}", "x")])
+            else:
+                rows.append(
+                    [
+                        (pre + labels["here"], f"rem:{key}:{n}h"),
+                        (pre + labels["nothing"], f"rem:{key}:{n}x"),
+                    ]
+                )
+        return self._markup(rows)
+
+    def offer_reminders(
+        self, chat: int, listed: list[dict], asked: list[dict], listing: list, reply_to
+    ) -> None:
+        """One message with the reminders an answer listed, buttons for each. Nothing happens until
+        a tap; untapped, the offer expires (OFFER_BUTTONS_TTL_S) as nothing."""
+        tz, now, items = ZoneInfo(self.s.timezone), _now(), []
+        for r in listed:
+            try:
+                at = dt.datetime.strptime(r["when"], "%Y-%m-%d %H:%M").replace(tzinfo=tz)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not now + 60 <= at.timestamp() <= now + REMIND_DAYS * 86400:
+                continue
+            ref = str(r.get("watch") or "")
+            hit = next(((u, w) for n, u, w in listing if ref and ref in (str(n), u)), None)
+            items.append(
+                {
+                    "at": at.timestamp(),
+                    "text": r["text"],
+                    "watch": hit[0] if hit else None,
+                    "title": (hit[1].get("title") or hit[1].get("url")) if hit else None,
+                    "done": None,
+                }
+            )
+        if not items:
+            return
+        many = len(items) > 1
+        lines = [
+            (f"{n + 1}. " if many else "")
+            + f"{self._when(i['at'])}: {i['text']}"
+            + (self.t("remind_watch", title=i["title"]) if i["watch"] else "")
+            for n, i in enumerate(items)
+        ]
+        names = list(dict.fromkeys(r.get("who") for r in asked if r.get("who")))
+        key = uuid.uuid4().hex[:8]
+        sent = self.send(
+            chat,
+            self.t("remind_offer", name=", ".join(names), lines="\n".join(lines)),
+            reply_to=reply_to,
+            markup=self._remind_markup(key, items),
+            plain=True,
+        )
+        if not sent:
+            return
+        offer = {
+            "key": key,
+            "chat": chat,
+            "msg": sent.get("message_id"),
+            "for": list(dict.fromkeys(r.get("user") for r in asked if r.get("user"))),
+            "who": names,
+            "items": items,
+            "ts": _now(),
+        }
+        with self.klock:
+            self.db.set_kv(REMIND, [*(self.db.get_kv(REMIND) or []), offer])
+
+    def tapped_remind(self, cq: dict, chat: int, key: str, choice: str) -> None:
+        """Where an offered reminder goes: here (stored, posted at its time) or nothing."""
+        user = cq.get("from") or {}
+        mid = (cq.get("message") or {}).get("message_id")
+        n, c = choice[:-1], choice[-1:]
+        with self.klock:
+            offers = self.db.get_kv(REMIND) or []
+            offer = next((o for o in offers if o.get("key") == key and o.get("chat") == chat), None)
+            if offer is None or _now() - offer.get("ts", 0) > OFFER_BUTTONS_TTL_S:
+                self._cb(cq, self.t("tap_gone"))
+                if offer is None:
+                    self._rekey(chat, mid, None)
+                return
+            if offer["for"] and user.get("id") not in offer["for"]:
+                self._cb(cq, self.t("offer_only_asker", who=", ".join(offer["who"])))
+                return
+            items = offer["items"]
+            if not n.isdigit() or int(n) >= len(items) or c not in ("h", "x"):
+                self._cb(cq)
+                return
+            item = items[int(n)]
+            if item.get("done"):
+                self._cb(cq, self.t("tap_gone"))
+                return
+            item["done"] = "here" if c == "h" else "nothing"
+            rest = [o for o in offers if o.get("key") != key]
+            still = any(not i.get("done") for i in items)
+            self.db.set_kv(REMIND, [*rest, offer] if still else rest or None)
+        who, when = self.who(user), self._when(item["at"])
+        self._cb(cq, self.t("remind_set", when=when) if c == "h" else None)
+        self._rekey(chat, offer.get("msg"), self._remind_markup(key, items))
+        if c == "h":
+            self.db.add_reminder(
+                chat, user.get("id"), who, item["at"], item["text"], item["watch"], item["title"]
+            )
+            self.note(chat, f"{who} set a reminder here for {when}: {item['text']}")
+        else:
+            self.note(chat, f"{who} chose no reminder for {when}: {item['text']}")
+
+    def tick_reminders(self) -> None:
+        """Post every reminder whose time has come, naming the person (a mention that notifies
+        them), then mark it sent; with a watch, check it again and post what it sees. One Telegram
+        keeps refusing is dropped after REMIND_GIVE_UP_S."""
+        now = _now()
+        for r in self.db.due_reminders(now):
+            body = html.escape(r["text"], quote=False)
+            who = html.escape(r.get("who") or "", quote=False)
+            if who and r.get("user"):
+                who = f'<a href="tg://user?id={int(r["user"])}">{who}</a>'
+            text = f"⏰ {who}: {body}" if who else f"⏰ {body}"
+            if now - r["at"] > LATE_S:
+                late = self.t("reminder_late", when=self._when(r["at"]))
+                text += "\n" + html.escape(late, quote=False)
+            if self.send(r["chat"], text) is None:
+                if now - r["at"] > REMIND_GIVE_UP_S:
+                    self.db.settle_reminder(r["id"], "failed")
+                continue
+            if self.db.settle_reminder(r["id"], "sent") and r.get("watch"):
+                self.later(self.recheck_for, r)
+
+    def recheck_for(self, r: dict) -> None:
+        """A reminder's watch, checked again at the reminder's time; the chat sees what it sees."""
+        rs = actions.apply(
+            self.cd, [actions.Action("recheck", r["watch"])], self.s, self.token, r["chat"], self.t
+        )
+        out = render.results(rs, self.t)
+        self.send(r["chat"], out, plain=True)
+        self.note(r["chat"], "At a reminder's time the app checked the watch again:\n" + out)
+
+    def cmd_reminders(self, chat: int, msg: dict) -> None:
+        """The chat's reminders still to come, each with a button to cancel it."""
+        rows = self.db.reminders(chat)[:20]
+        if not rows:
+            self.send(chat, self.t("reminders_none"), plain=True)
+            return
+        lines, buttons = [self.t("reminders_title")], []
+        for n, r in enumerate(rows, 1):
+            who = f" · {r['who']}" if r.get("who") else ""
+            watch = self.t("remind_watch", title=r["title"]) if r.get("watch") else ""
+            lines.append(f"{n}. {self._when(r['at'])}{who}: {r['text']}{watch}")
+            buttons.append([(self.t("reminders_cancel", n=n), f"can:{r['id']}:{n}")])
+        self.send(chat, "\n".join(lines), markup=self._markup(buttons), plain=True)
+
+    def tapped_cancel(self, cq: dict, chat: int, rid: str, n: str) -> None:
+        """Cancel a reminder from the /recordatorios list; its button says so."""
+        r = self.db.reminder(int(rid)) if rid.isdigit() else None
+        if r is None or r["chat"] != chat or not self.db.settle_reminder(r["id"], "cancelled"):
+            self._cb(cq, self.t("tap_gone"))
+            return
+        self._cb(cq, self.t("reminder_cancelled"))
+        user = cq.get("from") or {}
+        self.note(
+            chat,
+            f"{self.who(user)} cancelled the reminder for {self._when(r['at'])}: {r['text']}",
+        )
+        message = cq.get("message") or {}
+        tapped = cq.get("data")
+        rows = [
+            [
+                (f"✓ {self.t('reminders_cancelled', n=n)}", "x")
+                if b.get("callback_data") == tapped
+                else (b.get("text", ""), b.get("callback_data", "x"))
+                for b in row
+            ]
+            for row in (message.get("reply_markup") or {}).get("inline_keyboard") or []
+        ]
+        self._rekey(chat, message.get("message_id"), self._markup(rows))
+
     # ---- pending first checks
 
     def _followups(self, stop: threading.Event) -> None:
+        """Every half minute: pending first checks, reminders due, buttons expired."""
         while not stop.wait(FOLLOWUP_EVERY_S):
-            try:
-                self.check_followups()
-            except Exception as e:  # noqa: BLE001
-                log.warning("follow-up pass failed: %s", safe(e))
+            for fn in (self.check_followups, self.tick_reminders, self.expire_buttons):
+                try:
+                    fn()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("%s failed: %s", fn.__name__, safe(e))
 
     def check_followups(self) -> None:
         for f in self.db.followups():
