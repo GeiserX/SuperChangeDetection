@@ -15,7 +15,7 @@ Docker, next to changedetection:
 ```yaml
 services:
   superchangedetection:
-    image: drumsergio/superchangedetection:0.4.1
+    image: drumsergio/superchangedetection:0.4.2
     restart: unless-stopped
     environment:
       TZ: Europe/Madrid
