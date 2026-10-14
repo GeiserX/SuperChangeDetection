@@ -112,10 +112,12 @@ with a button to cancel it. The AI hears every choice with its next turn.
 
 ## Whom the AI answers
 
-The rules tell the AI how people reach it (a mention, a reply to one of its messages, a voice note, a tap
-on one of its buttons), that the group's other lines (`chat:`) are context only, and that a remark between
-people about the bot is never a request: no watch is created, changed or deleted, and no change to the
-app is asked for, because of one.
+The AI's rules start with the shared assistant principles, in the chat's language
+(`superchangedetection/principles/`): it acts only on what is addressed to it (a mention, a reply to one
+of its messages, a voice note), and a remark between people about the bot is never an order. The app's
+own rules add that a tap on one of its buttons reaches it as that person's message and that the group's
+other lines (`chat:`) are context only. The principles files are copied unchanged from the shared text,
+and a test pins their hashes.
 
 ## Notifications
 

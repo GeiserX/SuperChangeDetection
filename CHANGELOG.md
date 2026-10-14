@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+- The AI reads the shared assistant principles first, in the chat's language: whom it answers, buttons,
+  offers, privacy and honest results. The app ships them in `superchangedetection/principles/`, so an
+  instance needs no plugin for them. The app's own rules no longer repeat what the principles say.
+
 ## 0.4.1
 
 - The button that declines says «No», not «Nada»: a tap is an action. That covers the «Cada hora» /

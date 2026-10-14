@@ -24,6 +24,7 @@ SuperChangeDetection is a Telegram bot for a self-hosted [changedetection.io](ht
 - A plugin can carry out proposals, so the bot can change how it works when someone asks; `/presentacion` tells the chat what it can do here
 - English base with a Spanish translation; every string lives in a locale file
 - AI provider of your choice: any OpenAI-compatible endpoint, Anthropic, or a plugin file
+- The AI reads the shared assistant principles first, in English or Spanish (`superchangedetection/principles/`): twelve rules on whom it answers, buttons, offers, privacy and honest results. The app's own rules follow them and only add what is specific to watching pages. The files are copied unchanged from the shared text, and a test pins their hashes
 - The instance is the source of truth: the bot keeps no copy of the watches
 
 ## Quick start
