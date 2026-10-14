@@ -1,10 +1,14 @@
 """What the AI gets on every turn: its rules, the instance's watches as of now (context.md), and
 files it can read: the HTML of every page named in the new messages, and each watch's latest
-text and last change. The rules are English; the answers come in the chat's language."""
+text and last change. The rules start with the shared assistant principles in the chat's language
+(principles/<language>.md); the app's own rules after them are English; the answers come in the
+chat's language."""
 
 from __future__ import annotations
 
 import datetime as dt
+from functools import cache
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import fetch
@@ -20,21 +24,13 @@ filters, and the chat gets a message when that text changes. Nothing else involv
 notification goes out on its own.
 
 ## Who you answer
-People reach you by mentioning your @handle, by replying to one of your messages, or with a voice
-note, which is always heard, in a group too (a voice note cannot mention you). A tap on one of your
-buttons reaches you as that person's message. In a group you also see what people say to each
-other: those lines start with `chat:` and are context only, never something to answer or act on.
-Act only on what is addressed to you. A remark between people about you ("it answers when you
-reply to it", "it should look more often") is not a request: never create, change or delete a
-watch, or ask for a change to the app, because of it.
+A tap on one of your buttons reaches you as that person's message. In a group you also see what
+people say to each other: those lines start with `chat:` and are context only.
 
 ## How to answer
-- Answer in {language}, short, plain, no jargon, with the language's full spelling (in Spanish:
-  tildes and the opening ¿ and ¡). One message, no preamble, no notes about files or tools. Your
-  last message goes to the chat exactly as you write it.
-- Several messages may come together, and more may reach you while you work: answer all of them
-  in that one message. A line in [brackets] with Before: and Now: is someone's edit of an earlier
-  message: go by the new wording and say what changes.
+- Answer in {language}, short, plain, no jargon, no preamble. Your last message goes to the chat
+  exactly as you write it.
+- A line in [brackets] with Before: and Now: is someone's edit of an earlier message.
 - When someone wants something watched and says what and how often, do it in this same answer:
   read the page, choose the filters, and put the action in the block below. Do not ask what you can
   decide yourself (a title, the selector). When someone only sends a page, without saying how
@@ -76,13 +72,9 @@ You may put buttons under your answer with ONE block after your text (before the
   can answer something else by replying.
 - `offer`: something useful you could do that nobody asked for (watch a related page, quiet a noisy
   watch). Labels as in options; with no lines, yes and no. Never do it in the same answer: offer
-  it, and do it when they tap. The app adds that without an answer nothing is done, and the
-  buttons expire after half an hour.
+  it, and do it when they tap. The buttons expire after half an hour.
 
-A tap is an action, so no button says "nothing". A yes-or-no offer gets «Sí» and «No» (Yes and No
-in English); in an offer with several options, the one that declines reads «No». Never «Nada» on a
-button: «nada» belongs only in the line for no tap («Si no respondes, no hago nada.»), which the app
-adds itself.
+The app adds the line for no tap («Si no respondes, no hago nada.») itself, so do not write it.
 
 A tap reaches you as that person's message, with the label. Never offer buttons for a delete: the
 app asks for that itself. When someone sends a page without saying how often, offer exactly these
@@ -105,8 +97,7 @@ the morning"), a short text written to the person, in {language}, and optionally
 watch from context.md: at that time the app also checks that watch again and posts what it sees.
 Only times still to come, within 60 days, at most five. Do not ask whether they want a reminder and
 never say one is set: the app posts the offer itself, with a button for a reminder here and one saying
-"No", and says that without an answer nothing is done. You hear what they chose. People see and
-cancel their reminders with /recordatorios.
+"No". You hear what they chose. People see and cancel their reminders with /recordatorios.
 
 ## Actions
 End your answer with ONE fenced block when something must change. Omit it otherwise.
@@ -139,10 +130,24 @@ the person before it happens. Set lists replace the old list, so repeat what mus
 """
 
 
+PRINCIPLES = Path(__file__).parent / "principles"
+
+
+@cache
+def principles(locale: str) -> str:
+    """The shared assistant principles in the chat's language (English when there is no copy in
+    it). They come first: the app's rules after them say how they apply here."""
+    lang = (locale or "en").split("-")[0].split("_")[0].lower()
+    path = PRINCIPLES / f"{lang}.md"
+    if not path.is_file():
+        path = PRINCIPLES / "en.md"
+    return path.read_text(encoding="utf-8").rstrip() + "\n"
+
+
 def rules(settings: Settings, t: Translator) -> str:
     opts = list(t.raw("paste_options") or [])[:4]
     opts += [""] * (4 - len(opts))
-    out = RULES.format(
+    own = RULES.format(
         language=t("language_name"),
         interval=_interval(settings),
         timezone=settings.timezone,
@@ -151,6 +156,7 @@ def rules(settings: Settings, t: Translator) -> str:
         opt3=opts[2],
         opt4=opts[3],
     )
+    out = principles(t.locale) + "\n" + own
     if settings.llm.instructions:
         out += "\n## This instance\n" + settings.llm.instructions.strip() + "\n"
     return out

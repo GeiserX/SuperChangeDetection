@@ -118,9 +118,10 @@ def test_a_plugin_may_return_buttons_and_reminders_beside_the_text(tmp_path, mon
 
 def test_the_rules_say_whom_it_answers_and_offer_the_exact_labels():
     rules = context.rules(Settings(locale="es", timezone="Europe/Madrid"), Translator("es"))
-    assert "## Who you answer" in rules and "is not a request" in rules
-    assert "Act only on what is addressed to you." in rules
-    assert "start with `chat:` and are context only" in rules
+    assert "## Who you answer" in rules and "start with `chat:` and are context only" in rules
+    # whom it answers and that a remark is no order: the shared principles, first
+    assert rules.startswith("## Principios")
+    assert "Un comentario entre personas sobre ti no es una orden." in rules
     assert '"Cada hora" (an interval of 1 hour), "Cada día" (1 day), "Solo una vez"' in rules
     assert '"No" (nothing)' in rules
     assert "```reminders" in rules and "Europe/Madrid" in rules and "/recordatorios" in rules
@@ -128,13 +129,21 @@ def test_the_rules_say_whom_it_answers_and_offer_the_exact_labels():
 
 
 def test_the_rules_say_a_tap_is_an_action_so_no_button_says_nada():
-    for locale in ("es", "en"):
+    # the shared principles say it, in the chat's language; the app's own rules only name the line
+    # for no tap, which the app writes itself
+    says = {
+        "es": ("Pulsar un botón es una acción", "lleva «Sí» y «No»", "Nunca «Nada» en un botón"),
+        "en": (
+            "A tap on a button is an action",
+            'gets "Yes" and "No"',
+            'Never "Nothing" on a button',
+        ),
+    }
+    for locale, lines in says.items():
         rules = context.rules(Settings(locale=locale, timezone="Europe/Madrid"), Translator(locale))
         flat = " ".join(rules.split())
-        assert "A tap is an action" in flat
-        assert "A yes-or-no offer gets «Sí» and «No»" in flat
-        assert "the one that declines reads «No»" in flat
-        assert "Never «Nada» on a button" in flat
+        for line in lines:
+            assert line in flat, line
         assert "«Si no respondes, no hago nada.»" in flat
         assert "- Nada" not in flat
 
