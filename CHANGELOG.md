@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+- The AI's rules now say a tap is an action: a yes or no offer gets «Sí» and «No», the button that
+  declines among several reads «No», and «Nada» never appears on a button. «nada» stays only in
+  «Si no respondes, no hago nada.».
+
 ## 0.4.1
 
 - The button that declines says «No», not «Nada»: a tap is an action. That covers the «Cada hora» /

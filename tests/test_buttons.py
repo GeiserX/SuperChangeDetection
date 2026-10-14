@@ -127,6 +127,18 @@ def test_the_rules_say_whom_it_answers_and_offer_the_exact_labels():
     assert "Never offer buttons for a delete" in rules
 
 
+def test_the_rules_say_a_tap_is_an_action_so_no_button_says_nada():
+    for locale in ("es", "en"):
+        rules = context.rules(Settings(locale=locale, timezone="Europe/Madrid"), Translator(locale))
+        flat = " ".join(rules.split())
+        assert "A tap is an action" in flat
+        assert "A yes-or-no offer gets «Sí» and «No»" in flat
+        assert "the one that declines reads «No»" in flat
+        assert "Never «Nada» on a button" in flat
+        assert "«Si no respondes, no hago nada.»" in flat
+        assert "- Nada" not in flat
+
+
 # ---- buttons under an answer
 
 
