@@ -662,6 +662,8 @@ class Bot:
         text = (msg.get("text") or msg.get("caption") or "").strip()
         if not text or text.startswith("/") or not self.allowed(chat, user):
             return
+        if (msg.get("voice") or msg.get("audio")) and self.s.transcription.provider != "none":
+            return  # a caption edit of a transcribed note: the transcript is what was said
         chat_id, mid = int(chat["id"]), msg.get("message_id")
         private = chat.get("type") == "private"
         content = self.addressed(msg, text, private)

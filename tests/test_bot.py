@@ -918,6 +918,9 @@ def test_a_voice_note_holds_the_turn_until_heard_and_keeps_its_caption(world, mo
     fn, args = later.pop()
     fn(*args)
     assert [r["text"] for r in b.db.unsent(ANA)] == ["vigila las entradas"] and not b.voicing
+    b.on_edit({**note, "caption": "@watch_bot mira esto otro", "edit_date": 1})
+    assert [r["text"] for r in b.db.unsent(ANA)] == ["vigila las entradas"]  # the transcript stays
+    assert not b.db.unsent(GROUP)  # and a caption edit of the answered note starts no new turn
 
 
 def test_the_bot_asks_telegram_for_edits(world):
