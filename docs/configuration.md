@@ -78,8 +78,11 @@ def forget(conversation: str, settings: dict) -> None: ...  # optional, on /nuev
 `turn` has `conversation` (what the plugin returned last time in this chat, or `None`), `rules`
 (`scd rules`), `context` (`context.md` as of now), `files` (`pages/<n>.html`, `snapshots/<uuid>.txt`,
 `diffs/<uuid>.txt`), `new` (the lines the plugin has not seen yet, `[{"role": "user" | "app",
-"content"}]`; an `app` line reports what the app did with the AI's last block) and `history` (the earlier
-lines, a recap for when it starts over). `settings` is the `llm` block minus `plugin` and `instructions`.
+"content"}]`; an `app` line reports what the app did with the AI's last block), `history` (the earlier
+lines, a recap for when it starts over) and `attachments` (the photos and files sent with the new lines,
+`[{"name": "inbox/<message id>-<name>", "mime", "data": bytes, "from"}]`; the line that carries one names
+it as `[photo: <name>]` or `[file: <name>]`). The built-in `openai` and `anthropic` providers get only that
+line, not the file. `settings` is the `llm` block minus `plugin` and `instructions`.
 Return the answer, or `{"text", "conversation", "kept"}`: the app keeps `conversation` per chat and sends
 it back next time; `kept: false` means the provider did not store this turn, so the lines go again with the
 next one. The plugin must return before `timeout_s`. The answer may end with one `actions` block

@@ -11,7 +11,10 @@ Providers:
            "files": {"pages/1.html": ..., "snapshots/<uuid>.txt": ..., "diffs/<uuid>.txt": ...},
            "new": the lines it has not seen yet, [{"role": "user"|"app", "content": str}, ...]
                   ("app" lines report what the app did with the AI's last actions),
-           "history": the earlier lines, a recap for when it has to start over}.
+           "history": the earlier lines, a recap for when it has to start over,
+           "attachments": the photos and files sent with the new lines, [{"name": "inbox/<message
+                  id>-<name>", "mime": str, "data": bytes, "from": who sent it}, ...]; the line
+                  that carries one names it as [photo: <name>] or [file: <name>]}.
   It returns the answer, or {"text": answer, "conversation": id or None, "kept": bool}. The app
   keeps the id per chat and sends it back with the next message; None starts over with the recap
   next time, and kept False (the provider did not store this turn) sends these lines again.
@@ -48,7 +51,8 @@ Voice notes (settings.yaml, `transcription`): openai is any /audio/transcription
 is a file defining transcribe(audio: bytes, filename: str, settings: dict) -> str.
 
 openai and anthropic get the rules and context.md as the system prompt, the files inline after it,
-and history plus new as the messages. They keep nothing between turns.
+and history plus new as the messages. They keep nothing between turns. They do not get the attachments, only the
+line that names each one.
 """
 
 from __future__ import annotations

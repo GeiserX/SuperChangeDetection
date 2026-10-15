@@ -28,6 +28,12 @@ the answer.
 - A voice note or audio file from someone allowed is always answered, in the group too (it cannot
   mention the bot or reply by itself), caption or not: the transcript is echoed as a reply, then
   handled as typed text.
+- A photo, or a PDF or image sent as a file, from someone allowed is answered the same way, in the
+  group too; its caption is the message. Its line names it (inbox/<message id>-<name>) and the turn
+  downloads it then: FILE_MAX each, TURN_FILES_MAX a turn (a line past that waits for the next turn,
+  as does one that arrives while a turn runs). A plugin gets the bytes as turn["attachments"]. Another
+  kind of file, one too big and one that cannot be fetched get a short note. A caption edit is
+  ignored, as with a voice note.
 - A proposal from the provider (something it would do outside the chat, such as changing the
   bot's own code) is shown; `confirm_by` none runs at once in the background, the others wait for
   a yes from the asker or from one of `bot.users`. Only `bot.users` may ask for one.
@@ -79,6 +85,15 @@ TYPING_S = 4
 DEBOUNCE_S = 2.5
 VOICE_WAIT_S = 30  # a turn waits this long at most for a voice note of its chat still transcribing
 SETTLE_STEP_S = 0.5
+FILE_MAX = 20 * 1024 * 1024  # the largest file the Bot API lets a bot download
+TURN_FILES_MAX = 25 * 1024 * 1024  # the photos and files one turn carries at most
+# the kinds of file the AI can read, and the extension each gets in its inbox/ name
+FILE_EXTS = {
+    "application/pdf": ".pdf",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
 ANSWER_CLIP = 1500  # characters of an earlier answer quoted back with an edit of its message
 BUTTONS = "buttons"  # buttons under answers, across every chat
 BUTTONS_TTL_S = 12 * 3600  # options and confirms can be tapped this long
@@ -144,6 +159,33 @@ def _reply_to(rows: list[dict]) -> int | None:
     correction is about the message it edits, so it counts as that one)."""
     mids = {r.get("msg") for r in rows if _asked(r)}
     return mids.pop() if len(mids) == 1 else None
+
+
+def _budget(rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """The lines a turn takes and those that wait: a line with a file waits once the files taken so
+    far and its own would pass TURN_FILES_MAX (the first file always goes). A file whose size
+    Telegram did not give counts as FILE_MAX."""
+    take, wait, total, any_file = [], [], 0, False
+    for r in rows:
+        f = r.get("file")
+        size = f.get("size") if f and isinstance(f.get("size"), int) else FILE_MAX
+        if f and any_file and total + size > TURN_FILES_MAX:
+            wait.append(r)
+            continue
+        if f:
+            total, any_file = total + size, True
+        take.append(r)
+    return take, wait
+
+
+def _file_name(name, mime: str) -> str:
+    """A document's name fit for a path: ASCII letters, digits, - and _, with the extension of its
+    kind."""
+    folded = unicodedata.normalize("NFKD", str(name or ""))
+    stem = "".join(c for c in folded if not unicodedata.combining(c))
+    stem = re.sub(r"\.[^.]*$", "", stem)
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "-", stem).strip("-")[:60] or "file"
+    return stem + FILE_EXTS[mime]
 
 
 def _iso(ts) -> str:
@@ -356,6 +398,9 @@ class Bot:
                 self.voicing.setdefault(int(chat["id"]), []).append(start)
             self.later(self.voice, msg, start)
             return
+        if (msg.get("photo") or msg.get("document")) and self.allowed(chat, user):
+            self.on_file(msg)
+            return
         if not text or not self.allowed(chat, user):
             return
         chat_id = int(chat["id"])
@@ -376,11 +421,17 @@ class Bot:
         self.enqueue(chat_id, msg, content)
 
     def enqueue(
-        self, chat_id: int, msg: dict, content: str, asked: bool = True, edit: bool = False
+        self,
+        chat_id: int,
+        msg: dict,
+        content: str,
+        asked: bool = True,
+        edit: bool = False,
+        file: dict | None = None,
     ) -> None:
         """A line for the AI, tied to the watch when the message replies to a notification. A line
         that does not call the bot (asked False) waits for the next turn as context; edit True is
-        the app's correction about msg, never msg itself."""
+        the app's correction about msg, never msg itself; `file` is the photo or file it carries."""
         user = msg.get("from") or {}
         ref = None
         if self.from_me(msg.get("reply_to_message")):
@@ -397,6 +448,8 @@ class Bot:
         }
         if edit:
             row["edit"] = True
+        if file:
+            row["file"] = file
         self.db.push_unsent(chat_id, row)
         if asked:
             with self.qlock:
@@ -433,6 +486,59 @@ class Bot:
                     notes.remove(start)
                 if not notes:
                     self.voicing.pop(chat_id, None)
+
+    def on_file(self, msg: dict) -> None:
+        """A photo, or a file sent as a document: queued as a line that names it, with its caption
+        as the message; the bytes are fetched when the turn starts. Another kind of file, or one
+        over FILE_MAX, gets a short note instead."""
+        chat_id, mid = int(msg["chat"]["id"]), msg.get("message_id")
+        if msg.get("photo"):
+            sizes = [s for s in msg["photo"] if isinstance(s, dict) and s.get("file_id")]
+            if not sizes:
+                return
+            media = max(sizes, key=lambda s: (s.get("file_size") or 0, s.get("width") or 0))
+            name, mime, label = f"inbox/{mid}-photo.jpg", "image/jpeg", "photo"
+        else:
+            media = msg["document"]
+            mime = str(media.get("mime_type") or "").lower()
+            if mime not in FILE_EXTS or not media.get("file_id"):
+                log.info("file refused for chat %s: kind", chat_id)
+                self.send(chat_id, self.t("file_kind"), reply_to=mid, plain=True)
+                return
+            name, label = f"inbox/{mid}-{_file_name(media.get('file_name'), mime)}", "file"
+        size = media.get("file_size")
+        if isinstance(size, int) and size > FILE_MAX:
+            log.info("file refused for chat %s: too big", chat_id)
+            self.send(chat_id, self.t("file_too_big"), reply_to=mid, plain=True)
+            return
+        caption = self.clean(msg.get("caption") or "")
+        file = {"file_id": media["file_id"], "name": name, "mime": mime, "size": size}
+        self.enqueue(chat_id, msg, f"[{label}: {name}] {caption}".rstrip(), file=file)
+
+    def fetch_files(self, chat: int, rows: list[dict]) -> list[dict]:
+        """turn["attachments"]: the photos and files of the turn's lines, downloaded now. One that
+        cannot be fetched says so under its message, and its line goes on without it."""
+        out = []
+        for r in rows:
+            f = r.get("file")
+            if not f:
+                continue
+            try:
+                info = self.tg.get_file(f["file_id"])
+                path = str(info.get("file_path") or "")
+                if isinstance(info.get("file_size"), int) and info["file_size"] > FILE_MAX:
+                    raise TelegramError("getFile", 413, "file too big")
+                if not path:
+                    raise TelegramError("getFile", 0, "no file path")
+                data = self.tg.download(path)
+            except TelegramError as e:
+                log.warning("file not fetched for chat %s: %s", chat, safe(e))
+                big = e.code == 413 or "too big" in e.description.lower()
+                key = "file_too_big" if big else "file_failed"
+                self.send(chat, self.t(key), reply_to=r.get("msg"), plain=True)
+                continue
+            out.append({"name": f["name"], "mime": f["mime"], "data": data, "from": r.get("who")})
+        return out
 
     def clean(self, text: str) -> str:
         """A message's words without the bot's @handle."""
@@ -558,6 +664,7 @@ class Bot:
             rows = self.db.unsent(chat)
             if not any(_asked(r) for r in rows):
                 return
+            rows, waiting = _budget(rows)
             state = Turn(chat, {r["_id"] for r in rows})
             self.running[chat] = state
         reply = None
@@ -580,6 +687,7 @@ class Bot:
                 {"role": "user", "content": self.line(r, listing), "ts": _iso(r.get("ts"))}
                 for r in rows
             ]
+            attachments = self.fetch_files(chat, rows)
             turn = {
                 "conversation": self.db.get_kv(f"conversation:{chat}"),
                 "rules": context.rules(self.s, self.t),
@@ -588,6 +696,7 @@ class Bot:
                 "new": new,
                 "history": self.db.history(chat, self.s.bot.history, self.s.bot.history_days),
                 "incoming": self._incoming(state, listing),
+                "attachments": attachments,
             }
             threading.Thread(target=self._typing, args=(chat, stop), daemon=True).start()
             try:
@@ -608,6 +717,8 @@ class Bot:
         if reply.kept:
             self.db.drop_unsent(chat, covered)
             self.db.set_kv(f"app:{chat}", None)
+            if waiting:  # the lines past the files budget make the next turn, once these are gone
+                self.worker(chat).kick()
             for r in covered:
                 self.db.add_chat(
                     chat,
@@ -633,8 +744,9 @@ class Bot:
 
     def _incoming(self, state: Turn, listing: list):
         """turn["incoming"]: the chat's lines that called the bot since the last call, for the
-        provider's thread. Once the turn is over it hands over nothing, so a late call steals
-        nothing from the next turn."""
+        provider's thread. A line with a photo or a file waits for the next turn, which fetches it.
+        Once the turn is over it hands over nothing, so a late call steals nothing from the next
+        turn."""
 
         def incoming() -> list[dict]:
             with self.qlock:
@@ -643,7 +755,7 @@ class Bot:
                 got = [
                     r
                     for r in self.db.unsent(state.chat)
-                    if r["_id"] not in state.taken() and _asked(r)
+                    if r["_id"] not in state.taken() and _asked(r) and not r.get("file")
                 ]
                 state.pulled.extend(r["_id"] for r in got)
             return [
@@ -686,6 +798,8 @@ class Bot:
             return
         if (msg.get("voice") or msg.get("audio")) and self.s.transcription.provider != "none":
             return  # a caption edit of a transcribed note: the transcript is what was said
+        if msg.get("photo") or msg.get("document"):
+            return  # a caption edit of a photo or a file: the file is what was sent
         chat_id, mid = int(chat["id"]), msg.get("message_id")
         private = chat.get("type") == "private"
         content = self.addressed(msg, text, private)
