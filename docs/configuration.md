@@ -75,7 +75,9 @@ def converse(turn: dict, settings: dict) -> str | dict: ...  # required
 def forget(conversation: str, settings: dict) -> None: ...  # optional, on /nuevo
 ```
 
-`turn` has `conversation` (what the plugin returned last time in this chat, or `None`), `rules`
+`turn` has `conversation` (what the plugin returned last time in this chat, or `None`), `chat` (the
+chat's Telegram id), `asker` (the Telegram user id of the person whose line started the turn, the oldest
+that calls the bot, or `None`), `rules`
 (`scd rules`), `context` (`context.md` as of now), `files` (`pages/<n>.html`, `snapshots/<uuid>.txt`,
 `diffs/<uuid>.txt`), `new` (the lines the plugin has not seen yet, `[{"role": "user" | "app",
 "content"}]`; an `app` line reports what the app did with the AI's last block), `history` (the earlier

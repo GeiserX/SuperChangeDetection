@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.2
+
+- A plugin provider now knows which chat a turn is for and who asked: `turn["chat"]` is the chat's
+  Telegram id and `turn["asker"]` the user id of the person whose line started the turn (the oldest
+  line that calls the bot). A plugin can use them to reach that chat's own history elsewhere, such as
+  an earlier photo someone replies to. The built-in providers ignore them.
+- A reply to someone else's message says so on its line: `Ana (replying to Luis's photo of
+  2026-10-14T17:46:40+00:00): did you see it?`. Until now the AI read only `Ana: did you see it?` and had
+  no way to tell which photo was meant.
+
 ## 0.5.1
 
 - Any file reaches the AI, not only photos, PDFs and images: a Word or Excel file, a CSV, an archive, keeping
