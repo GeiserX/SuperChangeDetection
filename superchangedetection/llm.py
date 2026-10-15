@@ -14,7 +14,7 @@ Providers:
            "history": the earlier lines, a recap for when it has to start over,
            "attachments": the photos and files sent with the new lines, [{"name": "inbox/<message
                   id>-<name>", "mime": str, "data": bytes, "from": who sent it}, ...]; the line
-                  that carries one names it as [photo: <name>] or [file: <name>]}.
+                  that carries one names it as [<kind>: <name>], such as [photo: <name>] or [file: <name>]}.
   It returns the answer, or {"text": answer, "conversation": id or None, "kept": bool}. The app
   keeps the id per chat and sends it back with the next message; None starts over with the recap
   next time, and kept False (the provider did not store this turn) sends these lines again.

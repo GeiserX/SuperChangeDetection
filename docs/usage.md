@@ -22,8 +22,8 @@ to that message to adjust the watch: the bot knows which watch it is.
 With a transcription provider, a voice note is always answered, in the group too: the bot writes what it
 heard (`🎤 …`) and then handles it as if you had typed it.
 
-With a plugin provider you can send a photo, a screenshot or a PDF too, in the group as well, with what you
-want in its caption: «vigila el precio de esto».
+With a plugin provider you can send a photo, a screenshot, a PDF or any other file too, in the group as
+well, with what you want in its caption: «vigila el precio de esto».
 
 With a plugin that can carry out proposals, you can also ask the bot to work differently («añade un
 comando que…», «avisa de otra forma…»): it says what it will do and does it outside the chat, and tells you

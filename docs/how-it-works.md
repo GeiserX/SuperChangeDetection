@@ -141,12 +141,14 @@ could not be transcribed gets a short reply saying so.
 
 ## Photos and files
 
-A photo, or a PDF, JPEG, PNG or WebP sent as a file, from someone allowed is handled the same way, in the
-group too; its caption is the message. Its line names it (`[photo: inbox/<message id>-photo.jpg]`), and the
+A photo, a file of any kind, a video, a GIF, a video note or a sticker from someone allowed is handled the
+same way, in the group too; its caption is the message. Without a transcription provider a voice note or an
+audio file goes this way as well. Its line names it (`[photo: inbox/<message id>-photo.jpg]`,
+`[file: inbox/<message id>-<its own name>]`, `[video: …-video.mp4]`, `[sticker: …-sticker.webp]`), and the
 turn downloads it from Telegram when it starts: up to 20 MB each and 25 MB a turn (a line past that waits
 for the next turn, as does one sent while a turn runs). A plugin provider gets the bytes as
-`turn["attachments"]`; the built-in providers see only the line. Another kind of file, one too big and one
-that could not be downloaded get a short reply saying so. Editing a photo's caption changes nothing.
+`turn["attachments"]` and decides what the AI can open; the built-in providers see only the line. One too
+big and one that could not be downloaded get a short reply saying so. Editing a caption changes nothing.
 
 ## Proposals
 

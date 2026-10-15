@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1
+
+- Any file reaches the AI, not only photos, PDFs and images: a Word or Excel file, a CSV, an archive, keeping
+  its own name and extension (one with no mime type is `application/octet-stream`). Videos, GIFs, video
+  notes and stickers go the same way (`video.mp4`, `animation.mp4`, `video-note.mp4`,
+  `sticker.webp`/`.webm`/`.tgs`), and so do voice notes and audio files when there is no transcription
+  provider. The same caps apply. Whether the AI can open a file is the provider's to say; the "I only read
+  photos and PDFs" reply is gone.
+
 ## 0.5.0
 
 - The bot sees photos and files. A photo, or a PDF, JPEG, PNG or WebP sent as a file, is answered like a
