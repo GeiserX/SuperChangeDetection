@@ -30,6 +30,7 @@ class FakeTelegram:
         self.calls: list[tuple[str, dict]] = []
         self.updates: list[dict] = []
         self.fail_html = False
+        self.files: dict[str, dict] = {}  # file_id -> the getFile answer, or {"error": description}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         method = request.url.path.rsplit("/", 1)[-1]
@@ -37,7 +38,10 @@ class FakeTelegram:
         params = json.loads(request.content) if request.content else {}
         self.calls.append((method, params))
         if "/file/bot" in request.url.path:  # the download of a file
-            return httpx.Response(200, content=b"OggS")
+            name = request.url.path.rsplit("/", 1)[-1]
+            return httpx.Response(
+                200, content=b"JPEG" + name.encode() if ".jpg" in name else b"OggS"
+            )
         if method == "getMe":
             return self._ok(
                 {"id": BOT_ID, "username": "watch_bot", "can_read_all_group_messages": False}
@@ -56,7 +60,12 @@ class FakeTelegram:
         if method == "getChatMember":
             return self._ok({"status": "member"})
         if method == "getFile":
-            return self._ok({"file_id": params["file_id"], "file_path": "voice/1.oga"})
+            got = self.files.get(params["file_id"], {"file_path": "voice/1.oga"})
+            if "error" in got:
+                return httpx.Response(
+                    400, json={"ok": False, "error_code": 400, "description": got["error"]}
+                )
+            return self._ok({"file_id": params["file_id"], **got})
         return self._ok(True)
 
     @staticmethod
@@ -998,3 +1007,144 @@ def test_on_the_real_worker_a_burst_and_a_late_message_get_one_answer(world, mon
     assert len(ai["turns"]) == 1
     assert [m["content"] for m in ai["turns"][0]["new"]] == ["Ana: uno", "Ana: dos"]
     assert ft.texts().count("Todo hecho.") == 1 and not b.db.unsent(GROUP)
+
+
+# ---- photos and files
+
+
+def photo(caption=None, chat=GROUP, user=ANA, sizes=((90, 1_000, "s"), (1280, 200_000, "b"))):
+    msg = message("", chat=chat, user=user)
+    del msg["text"]
+    msg["photo"] = [{"file_id": f, "width": w, "file_size": n} for w, n, f in sizes]
+    if caption is not None:
+        msg["caption"] = caption
+    return msg
+
+
+def document(name, mime, size=50_000, file_id="d1", chat=GROUP):
+    msg = message("", chat=chat)
+    del msg["text"]
+    msg["document"] = {"file_id": file_id, "file_name": name, "mime_type": mime, "file_size": size}
+    return msg
+
+
+def test_a_photo_reaches_the_ai_with_its_caption_even_unaddressed_in_the_group(world):
+    b, ft, ai, _ = world
+    ft.files["b"] = {"file_path": "photos/file_7.jpg", "file_size": 200_000}
+    m = photo("@watch_bot vigila el precio de esto")
+    turn(b, m)
+    name = f"inbox/{m['message_id']}-photo.jpg"
+    assert ft.sent("getFile")[-1]["file_id"] == "b"  # the largest size
+    t = ai["turns"][-1]
+    assert t["new"][-1]["content"] == f"Ana: [photo: {name}] vigila el precio de esto"
+    assert t["attachments"] == [
+        {"name": name, "mime": "image/jpeg", "data": b"JPEGfile_7.jpg", "from": "Ana"}
+    ]
+    assert replies(ft)[-1] == ("Vale.", m["message_id"]) and not b.db.unsent(GROUP)
+    bare = photo()  # no caption, no mention: answered all the same, like a voice note
+    turn(b, bare)
+    assert (
+        ai["turns"][-1]["new"][-1]["content"]
+        == f"Ana: [photo: inbox/{bare['message_id']}-photo.jpg]"
+    )
+    n = len(ai["turns"])
+    b.on_message(photo(chat=LUIS, user=LUIS))  # a stranger's photo is ignored
+    assert not b.db.unsent(LUIS) and len(ai["turns"]) == n
+    turn(b, message("@watch_bot y sin foto"))
+    assert ai["turns"][-1]["attachments"] == []
+
+
+def test_a_document_is_taken_only_of_a_kind_and_size_the_ai_can_read(world):
+    b, ft, ai, _ = world
+    pdf = document("Factura Ñandú 2026.v2.PDF", "application/pdf")
+    turn(b, pdf)
+    name = f"inbox/{pdf['message_id']}-Factura-Nandu-2026-v2.pdf"
+    assert ai["turns"][-1]["new"][-1]["content"] == f"Ana: [file: {name}]"
+    assert [(a["name"], a["mime"]) for a in ai["turns"][-1]["attachments"]] == [
+        (name, "application/pdf")
+    ]
+    n = len(ai["turns"])
+    b.on_message(document("datos.zip", "application/zip"))
+    assert ft.texts()[-1].startswith("Solo leo fotos, PDF e imágenes")
+    b.on_message(document("enorme.pdf", "application/pdf", size=21 * 1024 * 1024))
+    assert "demasiado grande" in ft.texts()[-1]
+    assert not b.db.unsent(GROUP) and len(ai["turns"]) == n
+
+
+def test_a_file_that_cannot_be_fetched_says_so_and_its_line_goes_on(world):
+    b, ft, ai, _ = world
+    ft.files["big"] = {"error": "Bad Request: file is too big"}
+    ft.files["gone"] = {"error": "Bad Request: wrong file_id"}
+    big = document("a.pdf", "application/pdf", size=None, file_id="big")
+    gone = document("b.pdf", "application/pdf", file_id="gone")
+    b.on_message(big)
+    b.on_message(gone)
+    b.turn(GROUP)
+    assert replies(ft)[-3:-1] == [
+        (
+            "Ese archivo es demasiado grande para mí (hasta 20 MB). ¿Me mandas una foto o una captura?",
+            big["message_id"],
+        ),
+        ("No he podido descargar ese archivo. ¿Me lo vuelves a mandar?", gone["message_id"]),
+    ]
+    t = ai["turns"][-1]
+    assert len(t["new"]) == 2 and t["attachments"] == [] and not b.db.unsent(GROUP)
+    assert TOKEN not in json.dumps(ft.calls)
+
+
+def test_files_past_the_turn_budget_and_those_sent_during_a_turn_wait(world, monkeypatch):
+    b, ft, ai, _ = world
+    mb = 1024 * 1024
+    kicked = []
+    monkeypatch.setattr(
+        b, "worker", lambda chat: type("W", (), {"kick": lambda s: kicked.append(chat)})()
+    )
+    for i in range(3):
+        ft.files[f"d{i}"] = {"file_path": f"documents/{i}.jpg"}
+        b.on_message(document(f"{i}.jpg", "image/jpeg", size=10 * mb, file_id=f"d{i}"))
+    late = photo("@watch_bot y esta")
+    handed = []
+
+    def converse(data_, t):
+        ai["turns"].append(t)
+        if len(ai["turns"]) == 1:  # a photo while the turn runs: never handed over
+            b.on_message(late)
+            handed.extend(t["incoming"]())
+        return Reply("Vale.", conversation="c1")
+
+    monkeypatch.setattr(llm, "converse", converse)
+    kicked.clear()
+    b.turn(GROUP)
+    assert [a["name"].split("-", 1)[1] for a in ai["turns"][-1]["attachments"]] == [
+        "0.jpg",
+        "1.jpg",
+    ]
+    assert kicked and handed == []  # the third file waits, and its turn is asked for
+    b.turn(GROUP)
+    t = ai["turns"][-1]
+    assert [a["name"].split("-", 1)[1] for a in t["attachments"]] == ["2.jpg", "photo.jpg"]
+    assert t["new"][-1]["content"].endswith("-photo.jpg] y esta") and not b.db.unsent(GROUP)
+
+
+def test_a_caption_edit_of_a_photo_is_ignored(world):
+    b, _ft, ai, _ = world
+    m = photo("@watch_bot mira")
+    b.on_message(m)
+    b.on_edit({**m, "caption": "@watch_bot mira esto otro", "edit_date": 1})
+    b.turn(GROUP)
+    assert ai["turns"][-1]["new"][-1]["content"].endswith("-photo.jpg] mira")
+    b.on_edit({**m, "caption": "@watch_bot otra cosa", "edit_date": 2})
+    assert not b.db.unsent(GROUP)
+
+
+def test_budget_takes_the_first_file_always_and_text_lines_never_wait():
+    mb = 1024 * 1024
+    rows = [
+        {"_id": 1, "file": {"size": 24 * mb}},
+        {"_id": 2, "text": "hola"},
+        {"_id": 3, "file": {"size": 2 * mb}},
+        {"_id": 4, "file": {"size": None}},
+    ]
+    take, wait = botmod._budget(rows)
+    assert [r["_id"] for r in take] == [1, 2, 4] and [r["_id"] for r in wait] == [3]
+    assert botmod._budget([{"_id": 9, "file": {"size": 40 * mb}}])[0][0]["_id"] == 9

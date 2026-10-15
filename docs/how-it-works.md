@@ -139,6 +139,15 @@ Telegram, transcribed, echoed as a reply (`🎤 …`) so everyone sees what was 
 typed text, followed by its caption if it has one. A note that
 could not be transcribed gets a short reply saying so.
 
+## Photos and files
+
+A photo, or a PDF, JPEG, PNG or WebP sent as a file, from someone allowed is handled the same way, in the
+group too; its caption is the message. Its line names it (`[photo: inbox/<message id>-photo.jpg]`), and the
+turn downloads it from Telegram when it starts: up to 20 MB each and 25 MB a turn (a line past that waits
+for the next turn, as does one sent while a turn runs). A plugin provider gets the bytes as
+`turn["attachments"]`; the built-in providers see only the line. Another kind of file, one too big and one
+that could not be downloaded get a short reply saying so. Editing a photo's caption changes nothing.
+
 ## Proposals
 
 A plugin provider that defines `act()` may answer with proposals: things it would do outside the chat,

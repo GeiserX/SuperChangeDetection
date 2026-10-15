@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+- The bot sees photos and files. A photo, or a PDF, JPEG, PNG or WebP sent as a file, is answered like a
+  voice note, in the group too, with its caption as the message. The turn downloads it (20 MB each, 25 MB
+  a turn) and a plugin provider gets it as `turn["attachments"]`, named `inbox/<message id>-<name>`.
+  Until now a photo was dropped without a word, and only its caption reached the AI. Another kind of
+  file, one too big and one that cannot be downloaded get a short reply.
+
 ## 0.4.4
 
 - The shared principles now treat the household group as a place of trust: in it, anyone may ask about
