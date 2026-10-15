@@ -1146,5 +1146,26 @@ def test_budget_takes_the_first_file_always_and_text_lines_never_wait():
         {"_id": 4, "file": {"size": None}},
     ]
     take, wait = botmod._budget(rows)
-    assert [r["_id"] for r in take] == [1, 2, 4] and [r["_id"] for r in wait] == [3]
+    assert [r["_id"] for r in take] == [1, 2] and [r["_id"] for r in wait] == [3, 4]
     assert botmod._budget([{"_id": 9, "file": {"size": 40 * mb}}])[0][0]["_id"] == 9
+    # a size Telegram did not give counts as the most a file can be: two never share a turn
+    unknown = [{"_id": 5, "file": {"size": None}}, {"_id": 6, "file": {"file_id": "x"}}]
+    assert [[r["_id"] for r in x] for x in botmod._budget(unknown)] == [[5], [6]]
+
+
+def test_a_failed_turn_with_files_waiting_does_not_run_again_by_itself(world, monkeypatch):
+    b, _ft, ai, _ = world
+    kicked = []
+    monkeypatch.setattr(
+        b, "worker", lambda chat: type("W", (), {"kick": lambda s: kicked.append(chat)})()
+    )
+    for i in range(3):
+        b.on_message(
+            document(f"{i}.pdf", "application/pdf", size=10 * 1024 * 1024, file_id=f"d{i}")
+        )
+    kicked.clear()
+    ai["answers"].append(RuntimeError("down"))
+    b.turn(GROUP)
+    assert not kicked and len(b.db.unsent(GROUP)) == 3  # the next message brings them all again
+    b.turn(GROUP)
+    assert kicked == [GROUP] and len(b.db.unsent(GROUP)) == 1

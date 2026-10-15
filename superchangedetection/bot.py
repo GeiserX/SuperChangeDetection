@@ -163,11 +163,12 @@ def _reply_to(rows: list[dict]) -> int | None:
 
 def _budget(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     """The lines a turn takes and those that wait: a line with a file waits once the files taken so
-    far and its own would pass TURN_FILES_MAX (the first file always goes)."""
+    far and its own would pass TURN_FILES_MAX (the first file always goes). A file whose size
+    Telegram did not give counts as FILE_MAX."""
     take, wait, total, any_file = [], [], 0, False
     for r in rows:
         f = r.get("file")
-        size = f.get("size") if f and isinstance(f.get("size"), int) else 0
+        size = f.get("size") if f and isinstance(f.get("size"), int) else FILE_MAX
         if f and any_file and total + size > TURN_FILES_MAX:
             wait.append(r)
             continue
@@ -666,8 +667,6 @@ class Bot:
             rows, waiting = _budget(rows)
             state = Turn(chat, {r["_id"] for r in rows})
             self.running[chat] = state
-        if waiting:  # the lines past the files budget make the next turn
-            self.worker(chat).kick()
         reply = None
         stop = threading.Event()
         try:
@@ -718,6 +717,8 @@ class Bot:
         if reply.kept:
             self.db.drop_unsent(chat, covered)
             self.db.set_kv(f"app:{chat}", None)
+            if waiting:  # the lines past the files budget make the next turn, once these are gone
+                self.worker(chat).kick()
             for r in covered:
                 self.db.add_chat(
                     chat,
