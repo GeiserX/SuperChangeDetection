@@ -81,7 +81,7 @@ def forget(conversation: str, settings: dict) -> None: ...  # optional, on /nuev
 "content"}]`; an `app` line reports what the app did with the AI's last block), `history` (the earlier
 lines, a recap for when it starts over) and `attachments` (the photos and files sent with the new lines,
 `[{"name": "inbox/<message id>-<name>", "mime", "data": bytes, "from"}]`; the line that carries one names
-it as `[photo: <name>]` or `[file: <name>]`). The built-in `openai` and `anthropic` providers get only that
+it as `[<kind>: <name>]`, such as `[photo: <name>]` or `[file: <name>]`). The built-in `openai` and `anthropic` providers get only that
 line, not the file. `settings` is the `llm` block minus `plugin` and `instructions`.
 Return the answer, or `{"text", "conversation", "kept"}`: the app keeps `conversation` per chat and sends
 it back next time; `kept: false` means the provider did not store this turn, so the lines go again with the

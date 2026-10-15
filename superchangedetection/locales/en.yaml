@@ -64,7 +64,6 @@ intro_voice: "• Voice notes: I always listen to them, in the group as well, an
 intro_changes: "• If you want me to work differently (a new command, another way of telling you), ask me here and I will change it myself; it goes live with my next release.\n"
 intro_mentions: "• Right now the group's mentions do not reach me: make me an admin of the group, or reply to my messages.\n"
 voice_failed: "I could not make out that voice note."
-file_kind: "I only read photos, PDFs and images (JPEG, PNG or WebP). Can you send it as one of those?"
 file_too_big: "That file is too big for me (up to 20 MB). Can you send a photo or a screenshot instead?"
 file_failed: "I could not download that file. Can you send it again?"
 chatid: "This chat: {id}"

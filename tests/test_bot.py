@@ -1054,7 +1054,7 @@ def test_a_photo_reaches_the_ai_with_its_caption_even_unaddressed_in_the_group(w
     assert ai["turns"][-1]["attachments"] == []
 
 
-def test_a_document_is_taken_only_of_a_kind_and_size_the_ai_can_read(world):
+def test_a_file_of_any_kind_reaches_the_ai_with_its_own_name(world):
     b, ft, ai, _ = world
     pdf = document("Factura Ñandú 2026.v2.PDF", "application/pdf")
     turn(b, pdf)
@@ -1063,12 +1063,74 @@ def test_a_document_is_taken_only_of_a_kind_and_size_the_ai_can_read(world):
     assert [(a["name"], a["mime"]) for a in ai["turns"][-1]["attachments"]] == [
         (name, "application/pdf")
     ]
+    docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    sent = [
+        document("informe final.docx", docx, file_id="w"),
+        document("precios.csv", "text/csv", file_id="c"),
+        document("copia.zip", "application/zip", file_id="z"),
+        document("", None, file_id="x"),  # no name, no mime type
+    ]
+    for m in sent:
+        b.on_message(m)
+    b.turn(GROUP)
+    got = [(a["name"].split("-", 1)[1], a["mime"]) for a in ai["turns"][-1]["attachments"]]
+    assert got == [
+        ("informe-final.docx", docx),
+        ("precios.csv", "text/csv"),
+        ("copia.zip", "application/zip"),
+        ("file.bin", "application/octet-stream"),
+    ]
+    assert ai["turns"][-1]["new"][0]["content"].startswith("Ana: [file: inbox/")
     n = len(ai["turns"])
-    b.on_message(document("datos.zip", "application/zip"))
-    assert ft.texts()[-1].startswith("Solo leo fotos, PDF e imágenes")
     b.on_message(document("enorme.pdf", "application/pdf", size=21 * 1024 * 1024))
     assert "demasiado grande" in ft.texts()[-1]
     assert not b.db.unsent(GROUP) and len(ai["turns"]) == n
+
+
+def test_videos_gifs_video_notes_stickers_and_unheard_voice_notes_go_as_files(world):
+    b, _ft, ai, _ = world
+
+    def media(kind, **fields):
+        msg = message("", chat=ANA)
+        del msg["text"]
+        msg[kind] = {"file_id": f"{kind}-{len(fields)}", "file_size": 1000, **fields}
+        return msg
+
+    gif = media("animation", mime_type="video/mp4", file_name="risa.gif.mp4")
+    gif["document"] = dict(gif["animation"])  # Telegram sends a GIF with a document too
+    sent = [
+        gif,
+        media("video", mime_type="video/quicktime", file_name="IMG_1.MOV"),
+        media("video_note"),
+        media("sticker"),
+        media("sticker", is_animated=True),
+        media("sticker", is_video=True, is_animated=False),
+        media("voice", mime_type="audio/ogg"),  # no transcription provider: a file like the rest
+    ]
+    for m in sent:
+        b.on_message(m)
+    b.turn(ANA)
+    t = ai["turns"][-1]
+    got = [(a["name"].split("-", 1)[1], a["mime"]) for a in t["attachments"]]
+    assert got == [
+        ("animation.mp4", "video/mp4"),
+        ("video.mov", "video/quicktime"),
+        ("video-note.mp4", "video/mp4"),
+        ("sticker.webp", "image/webp"),
+        ("sticker.tgs", "application/x-tgsticker"),
+        ("sticker.webm", "video/webm"),
+        ("voice.ogg", "audio/ogg"),
+    ]
+    labels = [x["content"].split(":", 2)[1].strip(" [") for x in t["new"]]
+    assert labels == [
+        "animation",
+        "video",
+        "video note",
+        "sticker",
+        "sticker",
+        "sticker",
+        "voice note",
+    ]
 
 
 def test_a_file_that_cannot_be_fetched_says_so_and_its_line_goes_on(world):

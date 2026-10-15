@@ -28,12 +28,13 @@ the answer.
 - A voice note or audio file from someone allowed is always answered, in the group too (it cannot
   mention the bot or reply by itself), caption or not: the transcript is echoed as a reply, then
   handled as typed text.
-- A photo, or a PDF or image sent as a file, from someone allowed is answered the same way, in the
-  group too; its caption is the message. Its line names it (inbox/<message id>-<name>) and the turn
-  downloads it then: FILE_MAX each, TURN_FILES_MAX a turn (a line past that waits for the next turn,
-  as does one that arrives while a turn runs). A plugin gets the bytes as turn["attachments"]. Another
-  kind of file, one too big and one that cannot be fetched get a short note. A caption edit is
-  ignored, as with a voice note.
+- A photo, a file of any kind, a video, a GIF, a video note or a sticker from someone allowed is
+  answered the same way, in the group too; its caption is the message (so is a voice note or an
+  audio file when there is no transcription provider). Its line names it (inbox/<message id>-<name>)
+  and the turn downloads it then: FILE_MAX each, TURN_FILES_MAX a turn (a line past that waits for the
+  next turn, as does one that arrives while a turn runs). A plugin gets the bytes as
+  turn["attachments"]; whether the AI can open it is the plugin's to say. One too big and one that
+  cannot be fetched get a short note. A caption edit is ignored, as with a voice note.
 - A proposal from the provider (something it would do outside the chat, such as changing the
   bot's own code) is shown; `confirm_by` none runs at once in the background, the others wait for
   a yes from the asker or from one of `bot.users`. Only `bot.users` may ask for one.
@@ -57,6 +58,7 @@ from __future__ import annotations
 import datetime as dt
 import html
 import logging
+import mimetypes
 import re
 import threading
 import time
@@ -87,13 +89,19 @@ VOICE_WAIT_S = 30  # a turn waits this long at most for a voice note of its chat
 SETTLE_STEP_S = 0.5
 FILE_MAX = 20 * 1024 * 1024  # the largest file the Bot API lets a bot download
 TURN_FILES_MAX = 25 * 1024 * 1024  # the photos and files one turn carries at most
-# the kinds of file the AI can read, and the extension each gets in its inbox/ name
-FILE_EXTS = {
-    "application/pdf": ".pdf",
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
+# Telegram's kinds of file besides a photo and a sticker, in the order they are looked for (a GIF
+# also carries a document): the name it gets (None: its own), its mime type when Telegram gives
+# none, and how its line names it
+MEDIA = {
+    "animation": ("animation", "video/mp4", "animation"),
+    "video": ("video", "video/mp4", "video"),
+    "video_note": ("video-note", "video/mp4", "video note"),
+    "audio": ("audio", "audio/mpeg", "audio"),
+    "voice": ("voice", "audio/ogg", "voice note"),
+    "document": (None, "application/octet-stream", "file"),
 }
+MIME = mimetypes.MimeTypes()  # Python's own table only, the same on every host
+MIME.add_type("audio/ogg", ".ogg")  # a voice note's; Python 3.12's table has no extension for it
 ANSWER_CLIP = 1500  # characters of an earlier answer quoted back with an edit of its message
 BUTTONS = "buttons"  # buttons under answers, across every chat
 BUTTONS_TTL_S = 12 * 3600  # options and confirms can be tapped this long
@@ -178,14 +186,22 @@ def _budget(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     return take, wait
 
 
-def _file_name(name, mime: str) -> str:
-    """A document's name fit for a path: ASCII letters, digits, - and _, with the extension of its
-    kind."""
+def _media(msg: dict) -> bool:
+    """Whether the message carries a photo, a sticker or a file of one of the MEDIA kinds."""
+    return bool(msg.get("photo") or msg.get("sticker") or any(msg.get(k) for k in MEDIA))
+
+
+def _file_name(name, mime: str, stem: str = "file") -> str:
+    """A file's name fit for a path (ASCII letters, digits, - and _): its own with its extension, or
+    `stem` with the extension of its mime type."""
     folded = unicodedata.normalize("NFKD", str(name or ""))
-    stem = "".join(c for c in folded if not unicodedata.combining(c))
-    stem = re.sub(r"\.[^.]*$", "", stem)
-    stem = re.sub(r"[^A-Za-z0-9_-]+", "-", stem).strip("-")[:60] or "file"
-    return stem + FILE_EXTS[mime]
+    plain = "".join(c for c in folded if not unicodedata.combining(c))
+    base, dot, ext = plain.rpartition(".")
+    if not dot:
+        base, ext = plain, ""
+    base = re.sub(r"[^A-Za-z0-9_-]+", "-", base).strip("-")[:60] or stem
+    ext = re.sub(r"[^A-Za-z0-9]+", "", ext)[:8].lower()
+    return f"{base}.{ext}" if ext else base + (MIME.guess_extension(mime) or "")
 
 
 def _iso(ts) -> str:
@@ -398,7 +414,7 @@ class Bot:
                 self.voicing.setdefault(int(chat["id"]), []).append(start)
             self.later(self.voice, msg, start)
             return
-        if (msg.get("photo") or msg.get("document")) and self.allowed(chat, user):
+        if _media(msg) and self.allowed(chat, user):
             self.on_file(msg)
             return
         if not text or not self.allowed(chat, user):
@@ -488,9 +504,9 @@ class Bot:
                     self.voicing.pop(chat_id, None)
 
     def on_file(self, msg: dict) -> None:
-        """A photo, or a file sent as a document: queued as a line that names it, with its caption
-        as the message; the bytes are fetched when the turn starts. Another kind of file, or one
-        over FILE_MAX, gets a short note instead."""
+        """A photo, a file, a video, a GIF, a video note or a sticker: queued as a line that names
+        it, with its caption as the message; the bytes are fetched when the turn starts. One over
+        FILE_MAX gets a short note instead."""
         chat_id, mid = int(msg["chat"]["id"]), msg.get("message_id")
         if msg.get("photo"):
             sizes = [s for s in msg["photo"] if isinstance(s, dict) and s.get("file_id")]
@@ -498,14 +514,25 @@ class Bot:
                 return
             media = max(sizes, key=lambda s: (s.get("file_size") or 0, s.get("width") or 0))
             name, mime, label = f"inbox/{mid}-photo.jpg", "image/jpeg", "photo"
+        elif msg.get("sticker"):
+            media = msg["sticker"]
+            ext, mime = (
+                (".webm", "video/webm")
+                if media.get("is_video")
+                else (".tgs", "application/x-tgsticker")
+                if media.get("is_animated")
+                else (".webp", "image/webp")
+            )
+            name, label = f"inbox/{mid}-sticker{ext}", "sticker"
         else:
-            media = msg["document"]
-            mime = str(media.get("mime_type") or "").lower()
-            if mime not in FILE_EXTS or not media.get("file_id"):
-                log.info("file refused for chat %s: kind", chat_id)
-                self.send(chat_id, self.t("file_kind"), reply_to=mid, plain=True)
-                return
-            name, label = f"inbox/{mid}-{_file_name(media.get('file_name'), mime)}", "file"
+            kind = next(k for k in MEDIA if msg.get(k))
+            media = msg[kind]
+            stem, default, label = MEDIA[kind]
+            mime = str(media.get("mime_type") or default).lower()
+            own = media.get("file_name") if stem is None else None
+            name = f"inbox/{mid}-{_file_name(own, mime, stem or 'file')}"
+        if not media.get("file_id"):
+            return
         size = media.get("file_size")
         if isinstance(size, int) and size > FILE_MAX:
             log.info("file refused for chat %s: too big", chat_id)
@@ -798,7 +825,7 @@ class Bot:
             return
         if (msg.get("voice") or msg.get("audio")) and self.s.transcription.provider != "none":
             return  # a caption edit of a transcribed note: the transcript is what was said
-        if msg.get("photo") or msg.get("document"):
+        if _media(msg):
             return  # a caption edit of a photo or a file: the file is what was sent
         chat_id, mid = int(chat["id"]), msg.get("message_id")
         private = chat.get("type") == "private"
