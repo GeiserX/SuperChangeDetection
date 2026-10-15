@@ -7,6 +7,8 @@ Providers:
       def converse(turn: dict, settings: dict) -> str | dict
       def forget(conversation: str, settings: dict) -> None      # optional, on /new
   turn is {"conversation": the id it returned last time in this chat, or None,
+           "chat": the chat's Telegram id, "asker": the Telegram user id of the person whose line
+                  started the turn (the oldest that calls the bot), or None,
            "rules": the AI's rules (`scd rules`), "context": context.md as of now,
            "files": {"pages/1.html": ..., "snapshots/<uuid>.txt": ..., "diffs/<uuid>.txt": ...},
            "new": the lines it has not seen yet, [{"role": "user"|"app", "content": str}, ...]

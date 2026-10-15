@@ -191,6 +191,15 @@ def _media(msg: dict) -> bool:
     return bool(msg.get("photo") or msg.get("sticker") or any(msg.get(k) for k in MEDIA))
 
 
+def _kind(msg: dict) -> str:
+    """What a message carries, named as its line names it: photo, sticker, a MEDIA label or message."""
+    if msg.get("photo"):
+        return "photo"
+    if msg.get("sticker"):
+        return "sticker"
+    return next((MEDIA[k][2] for k in MEDIA if msg.get(k)), "message")
+
+
 def _file_name(name, mime: str, stem: str = "file") -> str:
     """A file's name fit for a path (ASCII letters, digits, - and _): its own with its extension, or
     `stem` with the extension of its mime type."""
@@ -449,9 +458,10 @@ class Bot:
         that does not call the bot (asked False) waits for the next turn as context; edit True is
         the app's correction about msg, never msg itself; `file` is the photo or file it carries."""
         user = msg.get("from") or {}
+        replied = msg.get("reply_to_message")
         ref = None
-        if self.from_me(msg.get("reply_to_message")):
-            found = REF.search(msg["reply_to_message"].get("text") or "")
+        if self.from_me(replied):
+            found = REF.search(replied.get("text") or "")
             ref = found.group(1) if found else None
         row = {
             "who": self.who(user),
@@ -462,6 +472,14 @@ class Bot:
             "ts": _now(),
             "asked": asked,
         }
+        # a reply to someone's message carries no copy of it: the line says whose, what and when, so
+        # a provider with the chat's history can find it (a topic's own first message is no reply)
+        if replied and not self.from_me(replied) and "forum_topic_created" not in replied:
+            row["re"] = {
+                "who": self.who(replied.get("from") or {}),
+                "kind": _kind(replied),
+                "ts": replied.get("date"),
+            }
         if edit:
             row["edit"] = True
         if file:
@@ -717,6 +735,9 @@ class Bot:
             attachments = self.fetch_files(chat, rows)
             turn = {
                 "conversation": self.db.get_kv(f"conversation:{chat}"),
+                "chat": chat,
+                # the person whose line started the turn: the oldest that calls the bot
+                "asker": next((r.get("user") for r in rows if _asked(r)), None),
                 "rules": context.rules(self.s, self.t),
                 "context": facts,
                 "files": files,
@@ -812,6 +833,10 @@ class Bot:
                 else f"replying to the notification of a watch that no longer exists ({row['ref']})"
             )
             return f"{seen}{who} ({where}): {row['text']}"
+        re_ = row.get("re")
+        if re_:
+            to = f"replying to {re_['who']}'s {re_['kind']} of {_iso(re_.get('ts'))}"
+            return f"{seen}{who} ({to}): {row['text']}"
         return f"{seen}{who}: {row['text']}"
 
     # ---- edits

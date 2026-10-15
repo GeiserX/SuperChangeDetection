@@ -192,6 +192,34 @@ def test_the_turn_carries_rules_context_files_history_and_the_conversation(world
     assert t2["history"][0]["content"] == "Ana: qué vigilas"
 
 
+def test_the_turn_names_its_chat_and_the_person_whose_line_started_it(world):
+    b, _ft, ai, _ = world
+    turn(b, message("@watch_bot hola", chat=ANA, user=ANA))
+    assert ai["turns"][0]["chat"] == ANA and ai["turns"][0]["asker"] == ANA
+    b.on_message(message("@watch_bot primero", user=LUIS, name="Luis"))
+    b.on_message(message("@watch_bot segundo"))
+    b.turn(GROUP)
+    t = ai["turns"][1]
+    assert [m["content"] for m in t["new"]] == ["Luis: primero", "Ana: segundo"]
+    assert t["chat"] == GROUP and t["asker"] == LUIS  # a burst: the oldest line that calls the bot
+
+
+def test_a_reply_to_someones_message_says_whose_what_and_when(world):
+    b, _ft, ai, _ = world
+    photo = {
+        "message_id": 40,
+        "from": {"id": LUIS, "first_name": "Luis"},
+        "date": 1792000000,
+        "photo": [{"file_id": "p1"}],
+    }
+    turn(b, message("@watch_bot ¿la viste?", reply_to=photo))
+    line = ai["turns"][0]["new"][-1]["content"]
+    assert line == "Ana (replying to Luis's photo of 2026-10-14T17:46:40+00:00): ¿la viste?"
+    topic = {"message_id": 2, "from": {"id": LUIS}, "date": 1, "forum_topic_created": {}}
+    turn(b, message("@watch_bot hola", reply_to=topic))  # a topic's first message is no reply
+    assert ai["turns"][1]["new"][-1]["content"] == "Ana: hola"
+
+
 def test_an_unkept_turn_sends_the_same_lines_again_and_a_failure_tells_the_chat(world):
     b, ft, ai, _ = world
     ai["answers"] = [Reply("Un momento.", conversation=None, kept=False)]

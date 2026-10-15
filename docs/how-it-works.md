@@ -13,7 +13,8 @@
 
 1. A message arrives (in the chat, or an actions file on the command line). In the chat the line the AI
    gets is `Name: text`; a reply to a change notification adds which watch it is about, read from the
-   `ref <uuid>` line of the notification.
+   `ref <uuid>` line of the notification. A reply to someone else's message says whose it was, what it
+   carried and when: `Name (replying to Other's photo of <ISO time>): text`.
 2. The app builds the AI's workspace: `CLAUDE.md`-style rules (`scd rules`), `context.md` with every watch
    numbered (title, url, filters, interval, backend, last check, last change, last error, which chat it
    notifies), `pages/<n>.html` for every URL in the new messages (scripts, styles and long attributes
