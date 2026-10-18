@@ -61,6 +61,7 @@ from __future__ import annotations
 import datetime as dt
 import html
 import logging
+import math
 import mimetypes
 import re
 import threading
@@ -195,9 +196,10 @@ def _budget(rows: list[dict]) -> tuple[list[dict], list[dict]]:
 def _retry_after(e: BaseException) -> float | None:
     """The seconds a busy provider asks to wait (its error's `retry_after`), or None."""
     later = getattr(e, "retry_after", None)
-    if isinstance(later, bool) or not isinstance(later, (int, float)) or later <= 0:
+    if isinstance(later, bool) or not isinstance(later, (int, float)):
         return None
-    return float(later)
+    later = float(later)
+    return later if math.isfinite(later) and later > 0 else None
 
 
 def _media(msg: dict) -> bool:
@@ -822,11 +824,12 @@ class Bot:
         if chat not in self.told_busy:
             self.told_busy.add(chat)
             minutes = max(1, round(seconds / 60))
-            wait = (
-                self.t("busy_minutes", n=minutes)
-                if minutes < 90
-                else self.t("busy_hours", n=round(minutes / 60))
-            )
+            if minutes == 1:
+                wait = self.t("busy_minute")
+            elif minutes < 90:
+                wait = self.t("busy_minutes", n=minutes)
+            else:
+                wait = self.t("busy_hours", n=round(minutes / 60))
             self.send(chat, self.t("ai_busy", wait=wait), reply_to=_reply_to(rows), plain=True)
         self.later(self.wake, chat, seconds)
 

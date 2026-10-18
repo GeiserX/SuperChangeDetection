@@ -290,14 +290,14 @@ def test_a_busy_spell_of_hours_says_hours_and_a_short_one_waits_a_minute(world, 
     assert ft.texts()[-1] == b.t("ai_busy", wait=b.t("busy_hours", n=3))
     ai["answers"] = [busy(5)]
     turn(b, message("@watch_bot hola"))
-    assert ft.texts()[-1] == b.t("ai_busy", wait=b.t("busy_minutes", n=1))
+    assert ft.texts()[-1] == b.t("ai_busy", wait=b.t("busy_minute"))
     assert b.resting[GROUP] - b.clock() > botmod.BUSY_MIN_S - 5
 
 
 def test_an_error_without_a_usable_retry_after_is_a_plain_failure(world, monkeypatch):
     b, ft, ai, _ = world
     monkeypatch.setattr(b, "later", lambda fn, *args: pytest.fail("no wake for a plain failure"))
-    for bad in (True, 0, -5, "60", None):
+    for bad in (True, 0, -5, "60", None, float("inf"), float("nan")):
         ai["answers"] = [busy(bad)]
         turn(b, message("@watch_bot hola"))
         assert "no responde" in ft.texts()[-1] and GROUP not in b.resting
