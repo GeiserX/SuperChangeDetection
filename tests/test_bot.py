@@ -237,6 +237,72 @@ def test_an_unkept_turn_sends_the_same_lines_again_and_a_failure_tells_the_chat(
     assert not b.db.unsent(GROUP)
 
 
+def busy(seconds):
+    e = RuntimeError("no capacity")
+    e.retry_after = seconds
+    return e
+
+
+def test_a_busy_provider_is_told_once_and_the_lines_are_answered_when_it_is_back(
+    world, monkeypatch
+):
+    b, ft, ai, _ = world
+    now = [1000.0]
+    b.clock = lambda: now[0]
+    woken, kicked = [], []
+    monkeypatch.setattr(b, "later", lambda fn, *args: woken.append((fn, args)))
+    monkeypatch.setattr(
+        b, "worker", lambda chat: type("W", (), {"kick": lambda s: kicked.append(chat)})()
+    )
+    ai["answers"] = [busy(3960)]
+    turn(b, message("@watch_bot primera"))
+    assert ft.texts()[-1] == b.t("ai_busy", wait=b.t("busy_minutes", n=66))
+    asked = len(ai["turns"])
+    turn(b, message("@watch_bot segunda"))
+    assert len(ai["turns"]) == asked  # it waits: no call while the provider is busy
+    assert ft.texts().count(ft.texts()[-1]) == 1  # told once
+    assert len(b.db.unsent(GROUP)) == 2  # queued in SQLite: a restart still answers them
+    now[0] += 3960
+    fn, args = woken[-1]
+    kicked.clear()
+    monkeypatch.setattr(botmod.time, "sleep", lambda s: None)
+    fn(*args)
+    assert kicked == [GROUP]  # nobody wrote again: the bot runs the turn by itself
+    told = len(ft.texts())
+    ai["answers"] = [busy(600)]
+    b.turn(GROUP)
+    assert len(ft.texts()) == told  # still the same spell: nothing more is said
+    now[0] += 600
+    ai["answers"] = ["Ya está."]
+    b.turn(GROUP)
+    assert [m["content"] for m in ai["turns"][-1]["new"]] == ["Ana: primera", "Ana: segunda"]
+    assert ft.texts()[-1] == "Ya está." and not b.db.unsent(GROUP)
+    ai["answers"] = [busy(600)]
+    turn(b, message("@watch_bot otra"))
+    assert ft.texts()[-1] == b.t("ai_busy", wait=b.t("busy_minutes", n=10))  # a new spell is told
+
+
+def test_a_busy_spell_of_hours_says_hours_and_a_short_one_waits_a_minute(world, monkeypatch):
+    b, ft, ai, _ = world
+    monkeypatch.setattr(b, "later", lambda fn, *args: None)
+    ai["answers"] = [busy(3 * 3600)]
+    turn(b, message("@watch_bot hola", chat=ANA, user=ANA))
+    assert ft.texts()[-1] == b.t("ai_busy", wait=b.t("busy_hours", n=3))
+    ai["answers"] = [busy(5)]
+    turn(b, message("@watch_bot hola"))
+    assert ft.texts()[-1] == b.t("ai_busy", wait=b.t("busy_minute"))
+    assert b.resting[GROUP] - b.clock() > botmod.BUSY_MIN_S - 5
+
+
+def test_an_error_without_a_usable_retry_after_is_a_plain_failure(world, monkeypatch):
+    b, ft, ai, _ = world
+    monkeypatch.setattr(b, "later", lambda fn, *args: pytest.fail("no wake for a plain failure"))
+    for bad in (True, 0, -5, "60", None, float("inf"), float("nan")):
+        ai["answers"] = [busy(bad)]
+        turn(b, message("@watch_bot hola"))
+        assert "no responde" in ft.texts()[-1] and GROUP not in b.resting
+
+
 # ---- what the app does with the answer
 
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+- When the AI has no capacity left, the bot waits for it instead of failing. A plugin raises an error
+  with a `retry_after` attribute (seconds); the chat is told once how long the wait is, the messages
+  stay queued (a restart keeps them), and the bot answers them by itself when the wait is over, with
+  what was sent meanwhile in the same answer. Until now the chat heard "the assistant is not
+  answering" and nothing happened until someone wrote again.
+- A merge to main that changes `__version__` publishes that version's image and tags the commit, so a
+  release no longer needs a tag pushed by hand. A tag pushed by hand still publishes.
+
 ## 0.5.2
 
 - A plugin provider now knows which chat a turn is for and who asked: `turn["chat"]` is the chat's
