@@ -18,8 +18,9 @@ Read this before changing anything.
   never sets them. Adding a field means adding it there, with its type, and a test.
 - **Tests:** `uv run --frozen pytest -q`; lint `uv run --frozen ruff check .` and `ruff format`.
   The fake instance in `tests/conftest.py` is the only changedetection the tests talk to.
-- **Release:** bump `__version__`, tag `vX.Y.Z` on main; the Docker workflow publishes
-  `drumsergio/superchangedetection:<version>` (amd64 and arm64).
+- **Release:** bump `__version__` in the pull request. When it reaches main, the Docker workflow
+  publishes `drumsergio/superchangedetection:<version>` (amd64 and arm64) and tags the commit
+  `vX.Y.Z`; a push to main whose version is tagged already publishes nothing.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker

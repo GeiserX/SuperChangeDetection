@@ -35,6 +35,9 @@ the answer.
   next turn, as does one that arrives while a turn runs). A plugin gets the bytes as
   turn["attachments"]; whether the AI can open it is the plugin's to say. One too big and one that
   cannot be fetched get a short note. A caption edit is ignored, as with a voice note.
+- A provider out of capacity (its error carries `retry_after`): the chat is told the wait once, its
+  lines stay queued, and the bot answers them by itself when the wait is over; lines sent meanwhile
+  join that answer.
 - A proposal from the provider (something it would do outside the chat, such as changing the
   bot's own code) is shown; `confirm_by` none runs at once in the background, the others wait for
   a yes from the asker or from one of `bot.users`. Only `bot.users` may ask for one.
@@ -87,6 +90,9 @@ TYPING_S = 4
 DEBOUNCE_S = 2.5
 VOICE_WAIT_S = 30  # a turn waits this long at most for a voice note of its chat still transcribing
 SETTLE_STEP_S = 0.5
+# A provider that is out of capacity raises an error with `retry_after` (seconds): the chat's lines
+# wait that long, at least BUSY_MIN_S, and are answered then, with nobody writing again.
+BUSY_MIN_S = 60
 FILE_MAX = 20 * 1024 * 1024  # the largest file the Bot API lets a bot download
 TURN_FILES_MAX = 25 * 1024 * 1024  # the photos and files one turn carries at most
 # Telegram's kinds of file besides a photo and a sticker, in the order they are looked for (a GIF
@@ -186,6 +192,14 @@ def _budget(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     return take, wait
 
 
+def _retry_after(e: BaseException) -> float | None:
+    """The seconds a busy provider asks to wait (its error's `retry_after`), or None."""
+    later = getattr(e, "retry_after", None)
+    if isinstance(later, bool) or not isinstance(later, (int, float)) or later <= 0:
+        return None
+    return float(later)
+
+
 def _media(msg: dict) -> bool:
     """Whether the message carries a photo, a sticker or a file of one of the MEDIA kinds."""
     return bool(msg.get("photo") or msg.get("sticker") or any(msg.get(k) for k in MEDIA))
@@ -266,6 +280,8 @@ class Bot:
         self.arrived: dict[int, float] = {}  # chat -> when its newest line that calls the bot came
         self.voicing: dict[int, list[float]] = {}  # chat -> start of each note being transcribed
         self.running: dict[int, Turn] = {}
+        self.resting: dict[int, float] = {}  # chat -> clock() its answer waits for (busy provider)
+        self.told_busy: set[int] = set()  # chats told of the wait, until an answer goes out
 
     # ---- start and run
 
@@ -704,6 +720,8 @@ class Bot:
         """One answer for every queued line of the chat. Lines that call the bot while it runs are
         handed to the provider (turn["incoming"]); those its answer does not cover stay queued for
         the next turn."""
+        if self.resting.get(chat, 0) > self.clock():
+            return  # the provider is busy: wake() runs the chat's turn when it is back
         self.settle(chat)
         with self.qlock:
             rows = self.db.unsent(chat)
@@ -751,6 +769,10 @@ class Bot:
                 reply = llm.converse(self.data, turn)
             except Exception as e:  # noqa: BLE001 - the provider's text may quote anything
                 log.warning("ai failed for chat %s: %s", chat, safe(e))
+                later = _retry_after(e)
+                if later is not None:  # out of capacity: the same lines go again by themselves
+                    self.rest(chat, rows, later)
+                    return
                 self.send(chat, self.t("ai_down"), reply_to=_reply_to(rows), plain=True)
                 return
         finally:
@@ -758,6 +780,7 @@ class Bot:
             with self.qlock:
                 state.closed = True  # a provider thread that outlives the turn takes nothing more
                 self.running.pop(chat, None)
+        self.told_busy.discard(chat)  # answered: a later busy spell is told again
         took = state.ids | (set(state.pulled) & reply.covers)
         # read again: an edit during the turn changed a line's text, and the log keeps the last one
         covered = [r for r in self.db.unsent(chat) if r["_id"] in took]
@@ -789,6 +812,30 @@ class Bot:
         )
         asked = [r for r in covered if _asked(r)] or [r for r in rows if _asked(r)]
         self.answer(chat, reply, asked[-1], listing, _reply_to(asked), asked)
+
+    def rest(self, chat: int, rows: list[dict], seconds: float) -> None:
+        """The provider is out of capacity for `seconds`: say so once, with the wait, and answer the
+        chat's lines by itself when it is back. They stay queued, so a restart loses none, and a
+        line that arrives meanwhile waits with them."""
+        seconds = max(float(seconds), BUSY_MIN_S)
+        self.resting[chat] = self.clock() + seconds
+        if chat not in self.told_busy:
+            self.told_busy.add(chat)
+            minutes = max(1, round(seconds / 60))
+            wait = (
+                self.t("busy_minutes", n=minutes)
+                if minutes < 90
+                else self.t("busy_hours", n=round(minutes / 60))
+            )
+            self.send(chat, self.t("ai_busy", wait=wait), reply_to=_reply_to(rows), plain=True)
+        self.later(self.wake, chat, seconds)
+
+    def wake(self, chat: int, seconds: float) -> None:
+        time.sleep(seconds)
+        if self.resting.get(chat, 0) > self.clock():
+            return  # a later rest set a later time and wakes itself
+        self.resting.pop(chat, None)
+        self.worker(chat).kick()
 
     def _incoming(self, state: Turn, listing: list):
         """turn["incoming"]: the chat's lines that called the bot since the last call, for the

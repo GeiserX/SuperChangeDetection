@@ -21,6 +21,9 @@ Providers:
   keeps the id per chat and sends it back with the next message; None starts over with the recap
   next time, and kept False (the provider did not store this turn) sends these lines again.
   A plugin that keeps a conversation on its side sends only `new` each turn.
+  A plugin whose provider is out of capacity raises an error with a `retry_after` attribute
+  (seconds): the app tells the chat how long the wait is, once, and answers the waiting lines by
+  itself then. Any other error tells the chat the assistant is not answering.
 
   Proposals: the app sets turn["proposals"] = True when the plugin also defines
       def act(proposal: dict, settings: dict) -> str | dict

@@ -64,6 +64,12 @@ A message that calls the bot while a turn runs is handed to that turn (`turn["in
 provider); the answer names the ones it took in, and only the rest make the next turn. One turn runs at a
 time per chat. An answer to one message replies to it; an answer to several is sent plainly.
 
+A provider out of capacity is waited for. When a plugin's error carries `retry_after` (seconds), the chat
+hears once how long the wait is («Ahora no puedo contestar: no me queda capacidad hasta dentro de unos 66
+minutos…»), its lines stay in SQLite, and the bot answers them by itself when the wait is over, a minute at
+least; what people send meanwhile joins that answer. Any other failure says the assistant is not
+answering, and the lines go with the next message.
+
 Edits count. Telegram sends the bot edited messages, and each is handled by where the message is: still
 waiting, its new text goes; in the running turn, a correction with the old and the new wording joins
 it; already answered, the correction and the answer it got start a new turn; a group message that did
