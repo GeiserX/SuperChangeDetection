@@ -311,27 +311,21 @@ class Bot:
 
     def announce_version(self) -> None:
         """After an upgrade, tell each of `bot.users` in private (the group when there are none)
-        which version now runs. The version is kept only once Telegram took a message, so a send
-        that fails is tried again at the next start; a restart on the same version says nothing."""
-        previous = self.db.get_kv("version")
-        if previous == __version__:
-            return
-        text = (
-            self.t("version_new_from", version=__version__, previous=previous)
-            if previous
-            else self.t("version_new", version=__version__)
-        )
-        to = list(self.s.bot.users) or [g for g in (self.group(),) if g]
-        delivered = False
-        for chat in to:
-            try:
-                self.tg.send(chat, html.escape(text, quote=False))
-                delivered = True
-            except TelegramError as e:
-                log.warning("version announcement to chat %s failed: %s", chat, safe(e))
-        if delivered:
-            self.db.set_kv("version", __version__)
-            log.info("announced version %s (was %s)", __version__, previous or "none")
+        which version now runs. Each chat keeps the last version it was told, stored only once
+        Telegram took the message: a send that fails is tried again at the next start, and a
+        restart on the same version says nothing."""
+        for chat in list(self.s.bot.users) or [g for g in (self.group(),) if g]:
+            previous = self.db.get_kv(f"version:{chat}")
+            if previous == __version__:
+                continue
+            text = (
+                self.t("version_new_from", version=__version__, previous=previous)
+                if previous
+                else self.t("version_new", version=__version__)
+            )
+            if self.send(chat, text, plain=True):
+                self.db.set_kv(f"version:{chat}", __version__)
+                log.info("told chat %s of version %s", chat, __version__)
 
     def check_group(self) -> None:
         """Whether the group's @mentions reach the bot: they do not with privacy mode on unless it
