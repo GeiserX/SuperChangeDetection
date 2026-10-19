@@ -115,3 +115,6 @@ reminders_title: "⏰ Recordatorios pendientes:"
 reminders_cancel: "Cancelar {n}"
 reminders_cancelled: "Cancelado {n}"
 reminder_cancelled: "Cancelado."
+
+version_new: "Nueva versión en marcha: {version}."
+version_new_from: "Nueva versión en marcha: {version} (antes {previous})."

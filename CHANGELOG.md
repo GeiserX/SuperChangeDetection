@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1
+
+- After an upgrade the bot says which version now runs: at start, each of `bot.users` gets
+  "New version running: 0.6.1 (was 0.6.0)." in private (the group when `bot.users` is empty). A
+  restart on the same version says nothing, and a message Telegram refuses is sent again at the next
+  start.
+
 ## 0.6.0
 
 - When the AI has no capacity left, the bot waits for it instead of failing. A plugin raises an error
