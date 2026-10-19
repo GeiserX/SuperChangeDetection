@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2
+
+- The new-version message goes to the group when none of `bot.users` can be told in private.
+  Telegram refuses a bot's first private message to someone who has never opened a chat with it, so
+  until now such an upgrade was announced to nobody.
+
 ## 0.6.1
 
 - After an upgrade the bot says which version now runs: at start, each of `bot.users` gets

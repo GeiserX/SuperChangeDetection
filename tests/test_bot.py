@@ -731,6 +731,18 @@ def test_a_refused_announcement_is_retried_for_that_admin_alone(world, monkeypat
     assert b.db.get_kv(f"version:{LUIS}") == "9.9.9"
 
 
+def test_when_no_admin_can_be_reached_the_group_is_told_once(world, monkeypatch):
+    b, ft, _ai, _ = world
+    monkeypatch.setattr(botmod, "__version__", "9.9.9")
+    ft.refuse = {ANA}  # never opened a private chat with the bot
+    ft.calls.clear()
+    b.start()
+    assert [chat for chat, _ in announced(ft)] == [GROUP]
+    ft.calls.clear()
+    b.start()  # the admin is tried again; the group, told already, is not
+    assert announced(ft) == [] and [p["chat_id"] for p in ft.sent()] == [ANA]
+
+
 def test_with_no_admins_the_group_gets_the_announcement(world):
     b, ft, _ai, _ = world
     b.s.bot.users = []

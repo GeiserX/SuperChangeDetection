@@ -310,22 +310,30 @@ class Bot:
         self.interrupted()
 
     def announce_version(self) -> None:
-        """After an upgrade, tell each of `bot.users` in private (the group when there are none)
-        which version now runs. Each chat keeps the last version it was told, stored only once
-        Telegram took the message: a send that fails is tried again at the next start, and a
-        restart on the same version says nothing."""
-        for chat in list(self.s.bot.users) or [g for g in (self.group(),) if g]:
-            previous = self.db.get_kv(f"version:{chat}")
-            if previous == __version__:
-                continue
-            text = (
-                self.t("version_new_from", version=__version__, previous=previous)
-                if previous
-                else self.t("version_new", version=__version__)
-            )
-            if self.send(chat, text, plain=True):
-                self.db.set_kv(f"version:{chat}", __version__)
-                log.info("told chat %s of version %s", chat, __version__)
+        """After an upgrade, tell each of `bot.users` in private which version now runs, and the
+        group when none of them could be told (no users, or none has opened a chat with the bot).
+        Each chat keeps the last version it was told, stored only once Telegram took the message:
+        a send that fails is tried again at the next start, and a restart on the same version says
+        nothing."""
+        admins = list(self.s.bot.users)
+        for chat in admins:
+            self._tell_version(chat)
+        group = self.group()
+        if group and not any(self.db.get_kv(f"version:{c}") == __version__ for c in admins):
+            self._tell_version(group)
+
+    def _tell_version(self, chat: int) -> None:
+        previous = self.db.get_kv(f"version:{chat}")
+        if previous == __version__:
+            return
+        text = (
+            self.t("version_new_from", version=__version__, previous=previous)
+            if previous
+            else self.t("version_new", version=__version__)
+        )
+        if self.send(chat, text, plain=True):
+            self.db.set_kv(f"version:{chat}", __version__)
+            log.info("told chat %s of version %s", chat, __version__)
 
     def check_group(self) -> None:
         """Whether the group's @mentions reach the bot: they do not with privacy mode on unless it
