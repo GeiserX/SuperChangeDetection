@@ -18,7 +18,7 @@ from the environment only. Defaults are the values shown.
 |---|---|---|
 | `token_env` | `TELEGRAM_BOT_TOKEN` | env var holding the bot token |
 | `chat_id` | none | the group; anyone in it may use the bot |
-| `users` | `[]` | Telegram user ids that may also talk to the bot in private, and the only ones who may ask for a proposal; each gets a private message with the new version after an upgrade (the group does when this is empty) |
+| `users` | `[]` | Telegram user ids that may also talk to the bot in private, and the only ones who may ask for a proposal; each gets a private message with the new version after an upgrade (the group does when none of them can be reached) |
 | `handles` | `{}` | user id (as a string) to `@handle`; looked up from Telegram when left out |
 | `history` | `20` | recent messages kept as context for the AI |
 | `history_days` | `0` | and every message of these last days, for a provider that has to start over (`0`: only `history`) |
