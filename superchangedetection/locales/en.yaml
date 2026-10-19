@@ -120,3 +120,6 @@ reminders_title: "⏰ Reminders to come:"
 reminders_cancel: "Cancel {n}"
 reminders_cancelled: "Cancelled {n}"
 reminder_cancelled: "Cancelled."
+
+version_new: "New version running: {version}."
+version_new_from: "New version running: {version} (was {previous})."

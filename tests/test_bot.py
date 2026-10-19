@@ -30,6 +30,7 @@ class FakeTelegram:
         self.calls: list[tuple[str, dict]] = []
         self.updates: list[dict] = []
         self.fail_html = False
+        self.refuse: set[int] = set()  # chats whose sendMessage is refused (never opened the bot)
         self.files: dict[str, dict] = {}  # file_id -> the getFile answer, or {"error": description}
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -49,6 +50,10 @@ class FakeTelegram:
         if method == "getUpdates":
             out, self.updates = self.updates, []
             return self._ok(out)
+        if method == "sendMessage" and params.get("chat_id") in self.refuse:
+            return httpx.Response(
+                403, json={"ok": False, "error_code": 403, "description": "Forbidden"}
+            )
         if method == "sendMessage":
             if self.fail_html and params.get("parse_mode") == "HTML":
                 return httpx.Response(
@@ -672,6 +677,66 @@ def test_a_failed_proposal_and_an_interrupted_one_are_reported(world, inline, mo
     b.db.set_kv(botmod.RUNNING, [{"id": "m", "chat": GROUP, "reply_to": 1}])
     b.start()
     assert "Me reinicié" in ft.texts()[-1] and b.db.get_kv(botmod.RUNNING) is None
+
+
+# ---- the version announcement
+
+
+def announced(ft) -> list[tuple[int, str]]:
+    """The announcements Telegram took."""
+    return [
+        (p["chat_id"], p["text"])
+        for p in ft.sent()
+        if "versión" in p["text"] and p["chat_id"] not in ft.refuse
+    ]
+
+
+def test_the_first_start_announces_the_version_to_each_admin_in_private(world):
+    b, ft, _ai, _ = world
+    assert announced(ft) == [(ANA, f"Nueva versión en marcha: {botmod.__version__}.")]
+    assert b.db.get_kv(f"version:{ANA}") == botmod.__version__
+    assert b.db.get_kv(f"sent:{ANA}")  # the newest bot message there, as for any other
+
+
+def test_a_restart_on_the_same_version_says_nothing(world):
+    b, ft, _ai, _ = world
+    ft.calls.clear()
+    b.start()
+    assert announced(ft) == []
+
+
+def test_a_new_version_says_which_one_it_replaces(world, monkeypatch):
+    b, ft, _ai, _ = world
+    old = botmod.__version__
+    ft.calls.clear()
+    monkeypatch.setattr(botmod, "__version__", "9.9.9")
+    b.start()
+    assert announced(ft) == [(ANA, f"Nueva versión en marcha: 9.9.9 (antes {old}).")]
+    assert b.db.get_kv(f"version:{ANA}") == "9.9.9"
+
+
+def test_a_refused_announcement_is_retried_for_that_admin_alone(world, monkeypatch):
+    b, ft, _ai, _ = world
+    b.s.bot.users = [ANA, LUIS]
+    monkeypatch.setattr(botmod, "__version__", "9.9.9")
+    ft.refuse = {LUIS}
+    ft.calls.clear()
+    b.start()
+    assert [chat for chat, _ in announced(ft)] == [ANA]
+    assert b.db.get_kv(f"version:{LUIS}") is None
+    ft.refuse = set()
+    ft.calls.clear()
+    b.start()
+    assert announced(ft) == [(LUIS, "Nueva versión en marcha: 9.9.9.")]
+    assert b.db.get_kv(f"version:{LUIS}") == "9.9.9"
+
+
+def test_with_no_admins_the_group_gets_the_announcement(world):
+    b, ft, _ai, _ = world
+    b.s.bot.users = []
+    ft.calls.clear()
+    b.start()
+    assert [chat for chat, _ in announced(ft)] == [GROUP]
 
 
 # ---- the template and the introduction

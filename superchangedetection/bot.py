@@ -71,7 +71,7 @@ import uuid
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
-from . import actions, context, llm, render
+from . import __version__, actions, context, llm, render
 from .actions import ActionError
 from .cd import CD, CDError, notifies
 from .db import DB
@@ -306,7 +306,26 @@ class Bot:
                 log.warning("profile sync failed: %s", safe(e))
         self.check_group()
         self.sync_notifications()
+        self.announce_version()
         self.interrupted()
+
+    def announce_version(self) -> None:
+        """After an upgrade, tell each of `bot.users` in private (the group when there are none)
+        which version now runs. Each chat keeps the last version it was told, stored only once
+        Telegram took the message: a send that fails is tried again at the next start, and a
+        restart on the same version says nothing."""
+        for chat in list(self.s.bot.users) or [g for g in (self.group(),) if g]:
+            previous = self.db.get_kv(f"version:{chat}")
+            if previous == __version__:
+                continue
+            text = (
+                self.t("version_new_from", version=__version__, previous=previous)
+                if previous
+                else self.t("version_new", version=__version__)
+            )
+            if self.send(chat, text, plain=True):
+                self.db.set_kv(f"version:{chat}", __version__)
+                log.info("told chat %s of version %s", chat, __version__)
 
     def check_group(self) -> None:
         """Whether the group's @mentions reach the bot: they do not with privacy mode on unless it
