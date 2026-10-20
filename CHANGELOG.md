@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.3
+
+- The image no longer trusts the eight eMudhra (emSign) intermediates whose private keys leaked in
+  October 2026: certifi goes to 2026.10.19 and the system `ca-certificates` to the trixie-security
+  release that distrusts them. Before, anyone could mint a certificate for any site that the bot
+  would accept.
+
 ## 0.6.2
 
 - The new-version message goes to the group when none of `bot.users` can be told in private.
