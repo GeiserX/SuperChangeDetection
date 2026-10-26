@@ -1,4 +1,4 @@
-FROM python:3.14.8-slim
+FROM python:3.15.0-slim
 # The base image ships ca-certificates 20250419, which still trusts the compromised eMudhra
 # intermediates; trixie-security carries the bundle that distrusts them.
 RUN apt-get update \
