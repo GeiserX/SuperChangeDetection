@@ -1147,7 +1147,7 @@ def test_on_the_real_worker_a_burst_and_a_late_message_get_one_answer(world, mon
     import time
 
     b, ft, ai, _ = world
-    b.__dict__.pop("worker")  # the real per-chat thread, not the tests' inline turns
+    monkeypatch.delattr(b, "worker")  # the real per-chat thread, not the tests' inline turns
     b.debounce = 0.3
     started, late_sent = threading.Event(), threading.Event()
 
